@@ -1,7 +1,11 @@
 /* O âmbito é o diretório desta PWA; só removemos caches com o nosso prefixo. */
-const CACHE_NAME = "assistente-fiscal-pt-shell-v2";
+const CACHE_NAME = "assistente-fiscal-pt-shell-v3";
 const CACHE_PREFIX = "assistente-fiscal-pt-";
-const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest", "./assets/icon-192.png", "./assets/icon-512.png", "./assets/icon.svg"];
+const SHELL = [
+  "./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest",
+  "./assets/icon-192.png", "./assets/icon-512.png", "./assets/icon.svg",
+  "./vendor/jszip.min.js", "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"
+];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

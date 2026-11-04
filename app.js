@@ -1,363 +1,581 @@
-/* Assistente Fiscal PT — versão local, sem IA e sem recolha automática de legislação. */
-const DB_NAME = "assistente-fiscal-pt-v1";
-const DB_VERSION = 1;
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
-const today = () => new Date().toLocaleDateString("en-CA");
-const nowIso = () => new Date().toISOString();
-const id = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
-const headers = ["diariodarepublica.pt", "info.portaldasfinancas.gov.pt", "cnc.min-financas.pt", "www.cnc.min-financas.pt", "eur-lex.europa.eu", "www.occ.pt", "occ.pt"];
+/* Assistente Fiscal PT — pesquisa documental local, sem respostas automáticas de IA. */
+const DB_NAME = "assistente-fiscal-pt-v1"; // Mantido para preservar os dados da v0.1.
+const DB_VERSION = 2;
+const MAX_FILE_BYTES = 12 * 1024 * 1024;
+const MAX_DOCUMENT_TEXT = 2_000_000;
+const MAX_QUERY_FILES = 3;
+const $ = selector => document.querySelector(selector);
+const $$ = selector => Array.from(document.querySelectorAll(selector));
+const now = () => new Date().toISOString();
+const today = () => {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+};
+const makeId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 
-const portals = [
-  { name: "Diário da República", detail: "Legislação publicada e versões consolidadas", category: "Primária", url: "https://diariodarepublica.pt/" },
-  { name: "Autoridade Tributária", detail: "Códigos tributários, instruções e doutrina", category: "Primária", url: "https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/Pages/default.aspx" },
-  { name: "Comissão de Normalização Contabilística", detail: "SNC e normas de relato financeiro", category: "Primária", url: "https://www.cnc.min-financas.pt/snc2016.html" },
-  { name: "EUR-Lex", detail: "Legislação e diretivas da União Europeia", category: "Primária", url: "https://eur-lex.europa.eu/" },
-  { name: "Ordem dos Contabilistas Certificados", detail: "Pareceres técnicos complementares", category: "Complementar", url: "https://www.occ.pt/" }
+const primarySources = [
+  { id:"at", initials:"AT", title:"Autoridade Tributária", description:"Códigos tributários, doutrina e instruções administrativas", type:"Oficial", url:"https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/Pages/default-com-pdf.aspx", hosts:["info.portaldasfinancas.gov.pt"] },
+  { id:"dr", initials:"DR", title:"Diário da República", description:"Publicações legislativas e versões consolidadas", type:"Oficial", url:"https://diariodarepublica.pt/", hosts:["diariodarepublica.pt"] },
+  { id:"cnc", initials:"CNC", title:"Normalização Contabilística", description:"SNC e normas portuguesas de relato financeiro", type:"Oficial", url:"https://www.cnc.min-financas.pt/snc2016.html", hosts:["www.cnc.min-financas.pt","cnc.min-financas.pt"] },
+  { id:"eurlex", initials:"EU", title:"EUR-Lex", description:"Diretivas e regulamentos da União Europeia", type:"Oficial", url:"https://eur-lex.europa.eu/", hosts:["eur-lex.europa.eu"] },
+  { id:"occ", initials:"OCC", title:"Ordem dos Contabilistas Certificados", description:"Informação técnica complementar; não substitui a lei", type:"Complementar", url:"https://www.occ.pt/", hosts:["www.occ.pt","occ.pt"] }
 ];
-const updates = [
-  { name: "Índices RSS — Diário da República", detail: "Publicações oficiais do dia", url: "https://diariodarepublica.pt/dr/geral/notificacoes/rss" },
-  { name: "Atualidades — Autoridade Tributária", detail: "Novidades fiscais e administrativas", url: "https://info.portaldasfinancas.gov.pt/pt/atualidades/Paginas/default.aspx" },
-  { name: "Instruções administrativas — AT", detail: "Circulares e ofícios-circulados", url: "https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/legislacao/Pages/default.aspx" },
-  { name: "Normas e legislação — CNC", detail: "Referencial contabilístico português", url: "https://www.cnc.min-financas.pt/snc2016.html" }
+const updateLinks = [
+  {title:"Diário da República",subtitle:"Publicações legislativas oficiais",url:"https://diariodarepublica.pt/"},
+  {title:"Autoridade Tributária",subtitle:"Atualidades e informação fiscal",url:"https://info.portaldasfinancas.gov.pt/pt/atualidades/Paginas/default.aspx"},
+  {title:"Instruções da AT",subtitle:"Circulares, ofícios-circulados e orientações",url:"https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/legislacao/Pages/default.aspx"},
+  {title:"Comissão de Normalização Contabilística",subtitle:"Normas contabilísticas e legislação SNC",url:"https://www.cnc.min-financas.pt/snc2016.html"}
 ];
+const stopwords = new Set("qual quais quando como para sobre este esta esse essa com uma das dos que por pode devem deve nos nas ser tem sao seus seja mais pela pelo onde quero existem existe artigo artigos quais quais quais umas uns uma quais sao deve posso posso fazer entre numa num das nos qual é sao são".split(" "));
 
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains("sources")) db.createObjectStore("sources", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("history")) db.createObjectStore("history", { keyPath: "id" });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
 let db;
-function all(storeName) {
-  return new Promise((resolve, reject) => {
-    const req = db.transaction(storeName, "readonly").objectStore(storeName).getAll();
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-function mutation(storeName, method, value) {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readwrite");
-    const store = tx.objectStore(storeName);
-    if (method === "clear") store.clear();
-    else store[method](value);
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
-}
-function newElement(tag, className, content) {
+let catalogSettings = {id:"catalog", disabled:[], custom:[]};
+let queryAttachments = [];
+let fileReading = false;
+
+function el(tag, className, content) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (content !== undefined) node.textContent = content;
   return node;
 }
-function makeExternalLink(url, label = "Abrir fonte ↗") {
-  const a = newElement("a", "source-link", label);
+function validHttpUrl(value) {
+  try { const url = new URL(value); return url.protocol === "https:" && !!url.hostname && !url.username && !url.password; }
+  catch { return false; }
+}
+function link(url, label = "Consultar portal ↗") {
+  const a = el("a", "source-link", label);
   a.href = url;
-  a.target = "_blank";
   a.rel = "noopener noreferrer";
+  a.target = "_blank";
   return a;
 }
-function emptyState(text, extra) {
-  const box = newElement("div", "empty-state");
-  box.append(newElement("span", "empty-symbol", "▤"), newElement("p", "", text));
-  if (extra) box.append(newElement("small", "", extra));
+function pill(text, extra = "") { return el("span", "pill " + extra, text); }
+function emptyState(title, description) {
+  const box = el("div", "empty-state");
+  box.append(el("span", "empty-mark", "▤"), el("strong", "", title), el("p", "", description));
   return box;
 }
-function isOfficialUrl(raw) {
-  try {
-    const u = new URL(raw);
-    return u.protocol === "https:" && !u.username && !u.password && headers.includes(u.hostname.toLowerCase());
-  } catch { return false; }
-}
-function toast(message, isError = false) {
+function toast(message, error = false) {
   const node = $("#toast");
   node.textContent = message;
-  node.classList.toggle("error", isError);
+  node.classList.toggle("error", error);
   node.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { node.hidden = true; }, 4400);
+  toast.timer = setTimeout(() => { node.hidden = true; }, 5000);
 }
-function showView(view) {
-  if (!["consulta", "fontes", "historico", "atualizacoes", "definicoes"].includes(view)) return;
-  $$(".view").forEach(section => {
-    const active = section.id === "view-" + view;
-    section.hidden = !active;
-    section.classList.toggle("active", active);
-  });
-  $$("[data-view]").forEach(button => {
-    const active = button.dataset.view === view;
-    button.classList.toggle("active", active);
-    if (active) button.setAttribute("aria-current", "page");
-    else button.removeAttribute("aria-current");
-  });
-  $("#sectionTitle").textContent = { consulta: "Consulta fiscal", fontes: "Fontes fiscais", historico: "Histórico", atualizacoes: "Atualizações", definicoes: "Definições" }[view];
-  history.replaceState(null, "", "#" + view);
-  window.scrollTo({ top: 0, behavior: "instant" });
-  if (view === "fontes") renderSavedSources();
-  if (view === "historico") renderHistory();
-  if (view === "definicoes") renderStorage();
+function formatDate(value) {
+  if (!value || typeof value !== "string") return "Sem data";
+  const parsed = new Date(value.includes("T") ? value : value + "T12:00:00");
+  return isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat("pt-PT", {dateStyle:"medium"}).format(parsed);
 }
-function renderPortals() {
-  const root = $("#officialSources");
-  root.replaceChildren();
-  portals.forEach(source => {
-    const card = newElement("article", "official-card");
-    card.append(newElement("span", "source-category", source.category), newElement("h3", "", source.name), newElement("p", "", source.detail), makeExternalLink(source.url));
-    root.append(card);
-  });
-  const links = $("#updatesLinks");
-  links.replaceChildren();
-  updates.forEach(source => {
-    const card = newElement("article", "list-card");
-    const info = newElement("div");
-    info.append(newElement("strong", "", source.name), newElement("p", "", source.detail));
-    card.append(info, makeExternalLink(source.url));
-    links.append(card);
+function normal(text) { return String(text).toLocaleLowerCase("pt-PT").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
+function keywords(text) { return [...new Set(normal(text).match(/[a-z0-9]{3,}/g) || [])].filter(w => !stopwords.has(w)); }
+function dateSort(a,b) { return String(b.createdAt||"").localeCompare(String(a.createdAt||"")); }
+
+function openDatabase() {
+  return new Promise((resolve,reject) => {
+    const req = indexedDB.open(DB_NAME,DB_VERSION);
+    req.onupgradeneeded = () => {
+      const database = req.result;
+      // Nunca limpar stores existentes numa atualização.
+      if (!database.objectStoreNames.contains("sources")) database.createObjectStore("sources",{keyPath:"id"});
+      if (!database.objectStoreNames.contains("history")) database.createObjectStore("history",{keyPath:"id"});
+      if (!database.objectStoreNames.contains("settings")) database.createObjectStore("settings",{keyPath:"id"});
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
   });
 }
-async function renderSavedSources() {
-  const root = $("#savedSources");
-  root.replaceChildren();
-  try {
-    const sources = (await all("sources")).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    if (!sources.length) { root.append(emptyState("Ainda não adicionaste documentos.", "Usa «Adicionar documento» para guardar texto de uma fonte oficial.")); return; }
-    sources.forEach(source => {
-      const card = newElement("article", "list-card");
-      const info = newElement("div");
-      info.append(newElement("strong", "", source.title), newElement("p", "", "Versão consultada em " + formatDate(source.consultedAt) + " · Texto guardado apenas neste dispositivo"));
-      const buttons = newElement("div", "list-actions");
-      const remove = newElement("button", "button button-danger button-small", "Eliminar");
-      remove.type = "button";
-      remove.addEventListener("click", async () => {
-        if (!confirm("Eliminar o documento «" + source.title + "» deste dispositivo?")) return;
-        await mutation("sources", "delete", source.id);
-        await renderSavedSources();
-        toast("Documento eliminado.");
-      });
-      buttons.append(makeExternalLink(source.url), remove);
-      card.append(info, buttons);
-      root.append(card);
-    });
-  } catch { root.append(emptyState("Não foi possível ler os documentos guardados.")); }
-}
-function formatDate(date) {
-  const d = new Date(date.includes("T") ? date : date + "T12:00:00");
-  return Number.isNaN(d.getTime()) ? date : new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium" }).format(d);
-}
-const stopwords = new Set(["qual", "quais", "quando", "como", "para", "sobre", "este", "esta", "esse", "essa", "com", "uma", "das", "dos", "que", "por", "pode", "devem", "deve", "nos", "nas", "ser", "tem", "sao", "são", "seus", "seja", "mais", "pela", "pelo", "onde", "quero"]);
-function normalize(text) { return text.toLocaleLowerCase("pt-PT").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
-function words(text) {
-  return [...new Set(normalize(text).match(/[a-z0-9]{3,}/g) || [])].filter(word => !stopwords.has(word));
-}
-function findMatches(question, sources) {
-  const terms = words(question);
-  if (!terms.length) return [];
-  const results = [];
-  sources.forEach(source => {
-    const passages = source.text.split(/(?:\r?\n){2,}/).flatMap(p => p.length > 1400 ? p.match(/[\s\S]{1,1200}/g) || [] : [p]);
-    passages.forEach(pass => {
-      const normalized = normalize(pass);
-      const found = terms.filter(term => normalized.includes(term));
-      if (!found.length) return;
-      const score = found.length * 3 + (found.length === terms.length ? 4 : 0);
-      let start = Math.min(...found.map(term => normalized.indexOf(term)));
-      start = Math.max(0, start - 75);
-      const excerpt = (start ? "…" : "") + pass.slice(start, start + 400).trim() + (start + 400 < pass.length ? "…" : "");
-      results.push({ source, score, excerpt });
-    });
+function all(storeName) {
+  return new Promise((resolve,reject) => {
+    const req = db.transaction(storeName,"readonly").objectStore(storeName).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
   });
-  return results.sort((a, b) => b.score - a.score).slice(0, 6);
 }
-async function runQuery(question, topic, keepHistory = true) {
-  const root = $("#resultsArea");
-  root.hidden = false;
-  root.replaceChildren();
-  const sources = await all("sources");
-  const matches = findMatches(question, sources);
-  if (keepHistory) await mutation("history", "put", { id: id(), question, topic, createdAt: nowIso(), matchCount: matches.length });
-  root.append(newElement("h2", "results-heading", matches.length ? matches.length + " excerto(s) encontrados" : "Sem excertos encontrados"));
-  const disclaimer = newElement("p", "results-disclaimer", "Os excertos são resultados de pesquisa textual. Não são uma resposta de IA, parecer fiscal ou confirmação da legislação em vigor.");
-  root.append(disclaimer);
-  if (!sources.length) {
-    root.append(emptyState("Não existem ainda textos legais guardados.", "No separador Fontes fiscais, adiciona texto de documentos oficiais para começar a pesquisa."));
-  } else if (!matches.length) {
-    root.append(emptyState("A pesquisa não encontrou correspondências nos documentos guardados.", "Isto não significa que a legislação não exista. Consulta os portais oficiais."));
-  } else {
-    matches.forEach(match => {
-      const card = newElement("article", "result-card");
-      card.append(newElement("strong", "", match.source.title), newElement("p", "", match.excerpt), newElement("small", "", "Versão consultada em " + formatDate(match.source.consultedAt)));
-      card.append(makeExternalLink(match.source.url, "Conferir no site oficial ↗"));
-      root.append(card);
-    });
-  }
-  root.scrollIntoView({ behavior: "smooth", block: "start" });
+function get(storeName,key) {
+  return new Promise((resolve,reject) => {
+    const req = db.transaction(storeName,"readonly").objectStore(storeName).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
 }
-async function renderHistory() {
-  const root = $("#historyList");
-  root.replaceChildren();
-  try {
-    const historyEntries = (await all("history")).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    if (!historyEntries.length) { root.append(emptyState("Ainda não existem consultas.", "As perguntas pesquisadas aparecerão aqui.")); return; }
-    historyEntries.forEach(entry => {
-      const card = newElement("article", "list-card");
-      const info = newElement("div");
-      info.append(newElement("strong", "", entry.question), newElement("p", "", entry.topic + " · " + formatDate(entry.createdAt) + " · " + entry.matchCount + " excertos na pesquisa original"));
-      const button = newElement("button", "button button-outline button-small", "Pesquisar novamente");
-      button.type = "button";
-      button.addEventListener("click", async () => {
-        showView("consulta");
-        $("#question").value = entry.question;
-        $("#topic").value = entry.topic;
-        await runQuery(entry.question, entry.topic, false);
-      });
-      card.append(info, button);
-      root.append(card);
-    });
-  } catch { root.append(emptyState("Não foi possível carregar o histórico.")); }
-}
-async function renderStorage() {
-  if (!navigator.storage?.estimate) { $("#storageInfo").textContent = "Estimativa de armazenamento indisponível neste navegador."; return; }
-  try {
-    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
-    $("#storageInfo").textContent = "Utilizado: " + (usage / 1024 / 1024).toFixed(1) + " MB" + (quota ? " · Disponível no navegador: " + (quota / 1024 / 1024).toFixed(0) + " MB" : "");
-  } catch { $("#storageInfo").textContent = "Não foi possível consultar o armazenamento disponível."; }
-}
-async function exportData() {
-  const backup = { app: "assistente-fiscal-pt", version: 1, exportedAt: nowIso(), sources: await all("sources"), history: await all("history") };
-  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "Assistente_Fiscal_PT_Backup_" + today() + ".json";
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  toast("Backup transferido. Guarda o ficheiro num local seguro.");
-}
-function validBackup(data) {
-  if (data?.app !== "assistente-fiscal-pt" || data.version !== 1 || !Array.isArray(data.sources) || !Array.isArray(data.history)) return false;
-  if (data.sources.length > 2000 || data.history.length > 50000) return false;
-  return data.sources.every(s => typeof s.id === "string" && typeof s.title === "string" && typeof s.text === "string" && s.text.length <= 2000000 && typeof s.consultedAt === "string" && typeof s.createdAt === "string" && isOfficialUrl(s.url))
-    && data.history.every(h => typeof h.id === "string" && typeof h.question === "string" && typeof h.topic === "string" && typeof h.createdAt === "string" && typeof h.matchCount === "number");
-}
-async function restoreData(file) {
-  if (!file) return;
-  if (file.size > 25 * 1024 * 1024) throw new Error("O backup é demasiado grande para esta versão.");
-  const data = JSON.parse(await file.text());
-  if (!validBackup(data)) throw new Error("O ficheiro não é um backup válido do Assistente Fiscal PT.");
-  if (!confirm("Restaurar este backup? Os documentos e o histórico existentes neste dispositivo serão substituídos.")) return;
-  // Reposição atómica: se algum registo falhar, a transação não substitui parcialmente os dados.
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(["sources", "history"], "readwrite");
-    tx.objectStore("sources").clear();
-    tx.objectStore("history").clear();
-    data.sources.forEach(s => tx.objectStore("sources").put(s));
-    data.history.forEach(h => tx.objectStore("history").put(h));
+function mutate(storeName,action,value) {
+  return new Promise((resolve,reject) => {
+    const tx = db.transaction(storeName,"readwrite");
+    if (action === "clear") tx.objectStore(storeName).clear();
+    else tx.objectStore(storeName)[action](value);
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
   });
+}
+
+function catalog() { return [...primarySources,...catalogSettings.custom]; }
+function enabled(id) { return !catalogSettings.disabled.includes(id); }
+function enabledCatalog() { return catalog().filter(s => enabled(s.id)); }
+function byCatalogId(id) { return catalog().find(s => s.id === id); }
+function documentCatalogId(document) {
+  if (document.catalogId) return byCatalogId(document.catalogId) ? document.catalogId : "local";
+  if (!document.url) return "local";
+  try {
+    const host = new URL(document.url).hostname.toLowerCase();
+    return catalog().find(s => s.hosts?.includes(host) || new URL(s.url).hostname.toLowerCase() === host)?.id || "local";
+  } catch { return "local"; }
+}
+async function loadCatalog() {
+  const stored = await get("settings","catalog");
+  if (!stored) return;
+  if (Array.isArray(stored.disabled) && Array.isArray(stored.custom)) {
+    catalogSettings = {id:"catalog",disabled:stored.disabled.filter(x => typeof x === "string"),custom:stored.custom.filter(x => x && typeof x.id === "string" && validHttpUrl(x.url))};
+  }
+}
+async function persistCatalog() {
+  await mutate("settings","put",catalogSettings);
+  await renderCatalog();
+  renderMiniSources();
+  renderDocumentSourceOptions();
+  await updateCounts();
+}
+async function setEnabled(id,active) {
+  const list = new Set(catalogSettings.disabled);
+  if (active) list.delete(id); else list.add(id);
+  catalogSettings.disabled = [...list];
+  try { await persistCatalog(); }
+  catch { toast("Não foi possível guardar a seleção.",true); }
+}
+
+function showView(view) {
+  const valid = ["consulta","fontes","historico","atualizacoes","definicoes"];
+  if (!valid.includes(view)) return;
+  $$(".view").forEach(node => {
+    const on = node.id === `view-${view}`;
+    node.hidden = !on;
+    node.classList.toggle("active",on);
+  });
+  $$('[data-view]').forEach(button => {
+    const on = button.dataset.view === view;
+    button.classList.toggle("active",on);
+    if (on) button.setAttribute("aria-current","page"); else button.removeAttribute("aria-current");
+  });
+  $("#sectionTitle").textContent = {consulta:"Nova consulta",fontes:"Biblioteca de fontes",historico:"Histórico",atualizacoes:"Atualizações",definicoes:"Definições"}[view];
+  history.replaceState(null,"",`#${view}`);
+  window.scrollTo({top:0,behavior:"instant"});
+  if (view === "fontes") { renderCatalog(); renderDocuments(); }
+  if (view === "historico") renderHistory();
+  if (view === "definicoes") renderStorage();
+}
+function makeToggle(source,active,compact=false) {
+  const label = el("label",compact ? "toggle toggle-small" : "toggle");
+  const input = el("input"); input.type = "checkbox"; input.checked = active;
+  input.setAttribute("aria-label",(active ? "Desativar " : "Ativar ") + source.title);
+  input.addEventListener("change",() => setEnabled(source.id,input.checked));
+  label.append(input,el("span","toggle-track"));
+  return label;
+}
+function renderMiniSources() {
+  const root = $("#querySourceList");
+  root.replaceChildren();
+  for (const source of catalog()) {
+    const active = enabled(source.id);
+    const row = el("div","mini-source-row" + (active ? "" : " is-disabled"));
+    const logo = el("span","source-monogram",source.initials || source.title.slice(0,2).toUpperCase());
+    const text = el("div","mini-source-text");
+    text.append(el("strong","",source.title),el("small","",source.type === "Personalizada" ? "Adicionada por ti" : source.type));
+    row.append(logo,text,makeToggle(source,active,true));
+    root.append(row);
+  }
+  const count = enabledCatalog().length;
+  $("#activeSourcesCount").textContent = `${count} ${count === 1 ? "fonte ativa" : "fontes ativas"}`;
+}
+async function renderCatalog() {
+  const root = $("#sourceCatalog"); root.replaceChildren();
+  for (const source of catalog()) {
+    const active = enabled(source.id);
+    const row = el("article","catalog-row" + (active ? "" : " inactive"));
+    const logo = el("span","catalog-monogram",source.initials || source.title.slice(0,2).toUpperCase());
+    const body = el("div","catalog-info");
+    const nameRow = el("div","catalog-name-row");
+    nameRow.append(el("h3","",source.title),pill(source.type,source.type === "Oficial" ? "pill-official" : "pill-muted"));
+    body.append(nameRow,el("p","",source.description || "Fonte personalizada adicionada à biblioteca."));
+    body.append(link(source.url,"Abrir website ↗"));
+    const actions = el("div","catalog-actions");
+    actions.append(makeToggle(source,active));
+    const button = el("button","button button-quiet button-small",source.type === "Personalizada" ? "Eliminar" : (active ? "Retirar" : "Reativar"));
+    button.type = "button";
+    button.addEventListener("click",async () => {
+      if (source.type !== "Personalizada") return setEnabled(source.id,!active);
+      if (!confirm(`Eliminar a fonte «${source.title}» da biblioteca? Os documentos já guardados não serão eliminados.`)) return;
+      catalogSettings.custom = catalogSettings.custom.filter(s => s.id !== source.id);
+      catalogSettings.disabled = catalogSettings.disabled.filter(id => id !== source.id);
+      try { await persistCatalog(); toast("Fonte personalizada eliminada."); }
+      catch { toast("Não foi possível eliminar a fonte.",true); }
+    });
+    actions.append(button);
+    row.append(logo,body,actions);
+    root.append(row);
+  }
+}
+function renderDocumentSourceOptions() {
+  const select = $("#documentSource");
+  const selected = select.value;
+  select.replaceChildren();
+  const local = el("option","","Documento próprio / sem portal"); local.value = "local"; select.append(local);
+  for (const source of catalog()) {
+    const option = el("option","",source.title); option.value = source.id; select.append(option);
+  }
+  select.value = [...select.options].some(o => o.value === selected) ? selected : "local";
+}
+async function updateCounts() {
+  try {
+    const saved = await all("sources");
+    $("#sidebarDocCount").textContent = `${saved.length} ${saved.length === 1 ? "documento" : "documentos"}`;
+    $("#documentsStat").textContent = String(saved.length).padStart(2,"0");
+    $("#enabledSourceStat").textContent = String(enabledCatalog().length).padStart(2,"0");
+  } catch { /* O erro principal será mostrado na vista de documentos. */ }
+}
+async function renderDocuments() {
+  const root = $("#documentsList"); root.replaceChildren();
+  try {
+    const documents = (await all("sources")).sort(dateSort);
+    if (!documents.length) { root.append(emptyState("A tua biblioteca está vazia","Adiciona um texto oficial, PDF, DOCX ou ficheiro de texto para poderes pesquisar o seu conteúdo.")); return; }
+    for (const document of documents) {
+      const row = el("article","document-row");
+      const icon = el("span","document-icon","▤");
+      const info = el("div","document-info");
+      const source = byCatalogId(documentCatalogId(document));
+      info.append(el("strong","",document.title),el("p","",`${source?.title || "Documento local"} · Versão de ${formatDate(document.consultedAt)}${document.fileName ? ` · ${document.fileName}` : ""}`));
+      const actions = el("div","document-actions");
+      if (document.url && validHttpUrl(document.url)) actions.append(link(document.url,"Origem ↗"));
+      const button = el("button","button button-danger button-small","Eliminar"); button.type = "button";
+      button.addEventListener("click",async () => {
+        if (!confirm(`Eliminar «${document.title}» dos documentos guardados neste dispositivo?`)) return;
+        try { await mutate("sources","delete",document.id); await renderDocuments(); await updateCounts(); toast("Documento eliminado."); }
+        catch { toast("Não foi possível eliminar o documento.",true); }
+      });
+      actions.append(button); row.append(icon,info,actions); root.append(row);
+    }
+  } catch { root.append(emptyState("Erro ao carregar biblioteca","Não foi possível consultar os documentos guardados neste navegador.")); }
+}
+
+async function extractFile(file) {
+  if (file.size > MAX_FILE_BYTES) throw new Error(`«${file.name}» excede 12 MB.`);
+  const extension = file.name.split(".").pop().toLowerCase();
+  let text;
+  if (extension === "pdf") {
+    const pdfjs = await import("./vendor/pdf.min.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.min.mjs",document.baseURI).href;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const task = pdfjs.getDocument({data:bytes,useSystemFonts:true});
+    const pdf = await task.promise;
+    const pages = Math.min(pdf.numPages,80);
+    const parts = [];
+    try {
+      for (let i=1;i<=pages;i++) {
+        const page = await pdf.getPage(i);
+        const contents = await page.getTextContent();
+        parts.push(contents.items.map(item => item.str || "").join(" "));
+        if (parts.join("\n").length > MAX_DOCUMENT_TEXT) break;
+      }
+    } finally { await pdf.destroy(); }
+    text = parts.join("\n\n");
+    if (pages < pdf.numPages) toast("Apenas as primeiras 80 páginas do PDF foram analisadas.");
+  } else if (extension === "docx") {
+    if (!window.JSZip) throw new Error("Leitura de Word indisponível. Atualiza a aplicação.");
+    const zip = await window.JSZip.loadAsync(await file.arrayBuffer());
+    const xmlEntry = zip.file("word/document.xml");
+    if (!xmlEntry) throw new Error(`«${file.name}» não contém um documento Word válido.`);
+    const xml = await xmlEntry.async("text");
+    const doc = new DOMParser().parseFromString(xml,"application/xml");
+    if (doc.querySelector("parsererror")) throw new Error("Não foi possível ler o documento Word.");
+    const paragraphs = [...doc.getElementsByTagNameNS("*","p")];
+    text = paragraphs.map(p => [...p.getElementsByTagNameNS("*","t")].map(n => n.textContent).join("")).join("\n");
+  } else if (["txt","md","csv","json","html","htm"].includes(extension)) {
+    text = await file.text();
+    if (["html","htm"].includes(extension)) {
+      const documentHtml = new DOMParser().parseFromString(text,"text/html");
+      documentHtml.querySelectorAll("script,style,template").forEach(n => n.remove());
+      text = documentHtml.body.textContent || "";
+    }
+  } else throw new Error(`O formato «.${extension}» ainda não é suportado.`);
+  text = String(text||"").slice(0,MAX_DOCUMENT_TEXT).trim();
+  if (text.length < 25) throw new Error(`Não foi possível extrair texto pesquisável de «${file.name}». Se for um PDF digitalizado, é necessário OCR.`);
+  return text;
+}
+async function addQueryFiles(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+  if (files.length + queryAttachments.length > MAX_QUERY_FILES) return toast("Podes anexar até três ficheiros por consulta.",true);
+  fileReading = true;
+  $("#querySubmit").disabled = true;
+  const button = $("#querySubmit");
+  const originalChildren = [...button.childNodes].map(node => node.cloneNode(true));
+  button.replaceChildren(el("span","","A ler documentos…"));
+  try {
+    for (const file of files) {
+      try {
+        const text = await extractFile(file);
+        queryAttachments.push({id:makeId(),name:file.name,text,size:file.size});
+        toast(`Ficheiro «${file.name}» preparado para a consulta.`);
+      } catch(error) { toast(error.message || "Erro ao ler o ficheiro.",true); }
+    }
+  } finally {
+    fileReading = false;
+    $("#querySubmit").disabled = false;
+    button.replaceChildren(...originalChildren);
+    renderAttachments();
+  }
+}
+function renderAttachments() {
+  const root = $("#attachedFiles"); root.replaceChildren();
+  for (const file of queryAttachments) {
+    const chip = el("div","attachment-chip");
+    const name = el("span","",`▤ ${file.name}`);
+    const remove = el("button","","×"); remove.type = "button"; remove.title = `Remover ${file.name}`; remove.setAttribute("aria-label",`Remover ${file.name}`);
+    remove.addEventListener("click",() => { queryAttachments = queryAttachments.filter(a => a.id !== file.id); renderAttachments(); });
+    chip.append(name,remove); root.append(chip);
+  }
+}
+
+function findMatches(question,documents) {
+  const terms = keywords(question);
+  if (!terms.length) return [];
+  const results = [];
+  for (const document of documents) {
+    const paragraphs = document.text.split(/(?:\r?\n){2,}/).flatMap(p => p.length > 1450 ? p.match(/[\s\S]{1,1200}/g) || [] : [p]);
+    for (const paragraph of paragraphs) {
+      const norm = normal(paragraph);
+      const matched = terms.filter(t => norm.includes(t));
+      if (!matched.length) continue;
+      const score = matched.length*4 + (matched.length === terms.length ? 7 : 0);
+      const start = Math.max(0,Math.min(...matched.map(t => norm.indexOf(t))) - 70);
+      const text = (start ? "…" : "") + paragraph.slice(start,start+520).trim() + (start+520 < paragraph.length ? "…" : "");
+      results.push({document,score,text});
+    }
+  }
+  return results.sort((a,b)=>b.score-a.score).slice(0,8);
+}
+async function runQuery(question,topic,save=true) {
+  const root = $("#resultsArea"); root.hidden = false; root.replaceChildren();
+  const enabledIds = new Set(enabledCatalog().map(s => s.id));
+  const savedDocuments = (await all("sources")).filter(s => {
+    const origin = documentCatalogId(s);
+    return origin === "local" || enabledIds.has(origin);
+  });
+  const temporary = queryAttachments.map(a => ({id:a.id,title:a.name,text:a.text,url:null,consultedAt:today(),origin:"attachment",catalogId:"local"}));
+  const documents = [...savedDocuments,...temporary];
+  const matches = findMatches(question,documents);
+  if (save) await mutate("history","put",{id:makeId(),question,topic,createdAt:now(),matchCount:matches.length,attachmentNames:queryAttachments.map(a=>a.name),activeSources:enabledCatalog().map(s=>s.id)});
+
+  const top = el("div","results-top");
+  const label = el("span","overline","RESULTADOS DA PESQUISA");
+  const heading = el("h2","",matches.length ? `${matches.length} excertos encontrados` : "Sem excertos encontrados");
+  top.append(label,heading); root.append(top);
+  root.append(el("p","results-disclaimer","Pesquisa textual nos documentos guardados e anexos desta consulta. Não constitui parecer fiscal, resposta gerada por IA ou confirmação de legislação atualizada."));
+  if (!documents.length) {
+    root.append(emptyState("Ainda não há textos para pesquisar","As fontes selecionadas são ligações para portais. Junta um PDF/Word à pergunta ou adiciona um documento à biblioteca para obter excertos."));
+  } else if (!matches.length) {
+    root.append(emptyState("Não encontrámos correspondências","Isso não significa que não exista legislação aplicável. Experimenta outros termos ou consulta o portal oficial."));
+  } else {
+    for (const item of matches) {
+      const card = el("article","result-card");
+      const topRow = el("div","result-card-top");
+      topRow.append(pill(item.document.origin === "attachment" ? "ANEXO DESTA PERGUNTA" : "BIBLIOTECA LOCAL","pill-result"),el("strong","",item.document.title));
+      card.append(topRow,el("p","",item.text));
+      const bottom = el("div","result-card-bottom");
+      bottom.append(el("small","",`Versão consultada: ${formatDate(item.document.consultedAt)}`));
+      if (item.document.url && validHttpUrl(item.document.url)) bottom.append(link(item.document.url,"Conferir origem ↗"));
+      card.append(bottom); root.append(card);
+    }
+  }
+  if (enabledCatalog().length) {
+    const block = el("div","result-portals");
+    block.append(el("strong","","Portais selecionados para conferência"));
+    const links = el("div","portal-links");
+    for (const source of enabledCatalog()) links.append(link(source.url,source.title+" ↗"));
+    block.append(links); root.append(block);
+  }
+  root.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+async function renderHistory() {
+  const root = $("#historyList"); root.replaceChildren();
+  try {
+    const entries = (await all("history")).sort(dateSort);
+    if (!entries.length) return root.append(emptyState("Ainda não há pesquisas","As questões que pesquisares vão aparecer nesta área."));
+    for (const entry of entries) {
+      const row = el("article","history-row");
+      const left = el("div","history-details");
+      left.append(pill(entry.topic || "Geral","pill-topic"),el("strong","",entry.question),el("small","",`${formatDate(entry.createdAt)} · ${entry.matchCount || 0} excertos${entry.attachmentNames?.length ? ` · ${entry.attachmentNames.length} anexo(s) não guardado(s)` : ""}`));
+      const button = el("button","button button-outline button-small","Retomar ↗"); button.type = "button";
+      button.addEventListener("click",async () => { showView("consulta"); $("#question").value = entry.question; $("#topic").value = entry.topic || "Geral"; queryAttachments = []; renderAttachments(); try { await runQuery(entry.question,entry.topic||"Geral",false); } catch { toast("Erro ao repetir a pesquisa.",true); } });
+      row.append(left,button); root.append(row);
+    }
+  } catch { root.append(emptyState("Não foi possível abrir o histórico","Tenta atualizar a aplicação.")); }
+}
+function renderUpdates() {
+  const root = $("#updatesLinks"); root.replaceChildren();
+  for (const item of updateLinks) {
+    const row = el("article","update-row");
+    const info = el("div"); info.append(el("strong","",item.title),el("p","",item.subtitle));
+    row.append(info,link(item.url,"Abrir portal ↗")); root.append(row);
+  }
+}
+async function renderStorage() {
+  try {
+    if (!navigator.storage?.estimate) throw new Error();
+    const {usage=0,quota=0} = await navigator.storage.estimate();
+    $("#storageInfo").textContent = `${(usage/1048576).toFixed(1)} MB utilizados${quota ? ` de ${(quota/1048576).toFixed(0)} MB disponibilizados pelo navegador` : ""}.`;
+  } catch { $("#storageInfo").textContent = "Estimativa indisponível neste navegador."; }
+}
+
+async function exportBackup() {
+  const backup = {app:"assistente-fiscal-pt",version:2,exportedAt:now(),sources:await all("sources"),history:await all("history"),settings:await all("settings")};
+  const url = URL.createObjectURL(new Blob([JSON.stringify(backup,null,2)],{type:"application/json"}));
+  const anchor = el("a"); anchor.href = url; anchor.download = `Assistente_Fiscal_PT_Backup_${today()}.json`;
+  document.body.append(anchor); anchor.click(); anchor.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+  toast("Backup transferido. Guarda-o num local seguro.");
+}
+function backupValid(data) {
+  if (!data || data.app !== "assistente-fiscal-pt" || ![1,2].includes(data.version) || !Array.isArray(data.sources) || !Array.isArray(data.history)) return false;
+  if (data.sources.length > 2000 || data.history.length > 50000) return false;
+  if (!data.sources.every(s => s && typeof s.id === "string" && typeof s.title === "string" && typeof s.text === "string" && s.text.length <= MAX_DOCUMENT_TEXT && typeof s.consultedAt === "string" && typeof s.createdAt === "string" && (!s.url || validHttpUrl(s.url)))) return false;
+  if (!data.history.every(h => h && typeof h.id === "string" && typeof h.question === "string" && typeof h.topic === "string" && typeof h.createdAt === "string" && typeof h.matchCount === "number")) return false;
+  if (data.version === 2 && (!Array.isArray(data.settings) || data.settings.length > 10 || !data.settings.every(s => s && typeof s.id === "string" && (!s.custom || (Array.isArray(s.custom) && s.custom.length <= 200 && s.custom.every(c => c && typeof c.title === "string" && validHttpUrl(c.url))))))) return false;
+  return true;
+}
+async function restoreBackup(file) {
+  if (!file) return;
+  if (file.size > 35*1024*1024) throw new Error("O backup é demasiado grande para restaurar nesta versão.");
+  const data = JSON.parse(await file.text());
+  if (!backupValid(data)) throw new Error("O ficheiro não é um backup válido do Assistente Fiscal PT.");
+  if (!confirm("Restaurar este backup? Os documentos, as fontes e o histórico atuais serão substituídos neste dispositivo.")) return;
+  await new Promise((resolve,reject) => {
+    const tx = db.transaction(["sources","history","settings"],"readwrite");
+    const sources = tx.objectStore("sources"),historyStore = tx.objectStore("history"),settingsStore = tx.objectStore("settings");
+    sources.clear(); historyStore.clear(); settingsStore.clear();
+    data.sources.forEach(s => sources.put(s));
+    data.history.forEach(h => historyStore.put(h));
+    if (data.version === 2) data.settings.forEach(s => settingsStore.put(s));
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+  catalogSettings = {id:"catalog",disabled:[],custom:[]};
+  await loadCatalog();
+  await updateCounts(); renderMiniSources(); renderCatalog(); renderDocumentSourceOptions(); renderDocuments(); renderHistory();
   toast("Backup restaurado com sucesso.");
-  await renderSavedSources();
-  await renderHistory();
+}
+
+function setupNetwork() {
+  const refresh = () => { const node = $("#networkStatus"); node.textContent = navigator.onLine ? "Online" : "Offline"; node.classList.toggle("offline",!navigator.onLine); };
+  window.addEventListener("online",refresh); window.addEventListener("offline",refresh); refresh();
 }
 function setupInstall() {
-  let installPrompt;
   const button = $("#installButton");
-  window.addEventListener("beforeinstallprompt", event => {
-    event.preventDefault();
-    installPrompt = event;
-    button.textContent = "Instalar no PC";
-  });
-  button.addEventListener("click", async () => {
+  let prompt;
+  window.addEventListener("beforeinstallprompt",e => { e.preventDefault(); prompt=e; });
+  button.addEventListener("click",async () => {
     if (matchMedia("(display-mode: standalone)").matches || navigator.standalone) return toast("A aplicação já está instalada.");
-    if (installPrompt) {
-      installPrompt.prompt();
-      await installPrompt.userChoice;
-      installPrompt = null;
-    } else if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
-      toast("No iPhone, usa Partilhar → Adicionar ao ecrã principal.");
-    } else {
-      toast("Quando a instalação estiver disponível, o navegador mostrará a opção Instalar aplicação.");
-    }
+    if (prompt) { prompt.prompt(); await prompt.userChoice; prompt=null; return; }
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) return toast("No iPhone, escolhe Partilhar → Adicionar ao ecrã principal.");
+    toast("No Chrome ou Edge, abre o menu do navegador e escolhe Instalar aplicação.");
   });
-  window.addEventListener("appinstalled", () => { button.textContent = "Instalada"; toast("Assistente Fiscal PT instalado."); });
-  if (matchMedia("(display-mode: standalone)").matches || navigator.standalone) button.textContent = "Instalada";
+  window.addEventListener("appinstalled",() => { button.textContent="Instalada"; toast("Assistente Fiscal PT instalado."); });
+  if (matchMedia("(display-mode: standalone)").matches || navigator.standalone) button.textContent="Instalada";
 }
-function setupNetwork() {
-  const refresh = () => {
-    $("#networkStatus").textContent = navigator.onLine ? "Online" : "Offline";
-    $("#networkStatus").classList.toggle("offline", !navigator.onLine);
-  };
-  window.addEventListener("online", refresh);
-  window.addEventListener("offline", refresh);
-  refresh();
-}
-function setupHandlers() {
-  $$("[data-view]").forEach(button => button.addEventListener("click", () => showView(button.dataset.view)));
-  $$("[data-topic]").forEach(button => button.addEventListener("click", () => { $("#topic").value = button.dataset.topic; $("#question").focus(); }));
-  $("#queryForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    const question = $("#question").value.trim();
-    if (!question) return;
-    try { await runQuery(question, $("#topic").value); } catch { toast("Não foi possível guardar a consulta.", true); }
+
+function openCatalogDialog() { $("#catalogForm").reset(); $("#catalogError").textContent=""; $("#catalogDialog").showModal(); }
+function openDocumentDialog() { $("#documentForm").reset(); $("#documentDate").value = today(); $("#documentError").textContent=""; renderDocumentSourceOptions(); $("#documentDialog").showModal(); }
+
+function bindHandlers() {
+  $$('[data-view]').forEach(button => button.addEventListener("click",() => showView(button.dataset.view)));
+  $$('[data-example]').forEach(button => button.addEventListener("click",() => { $("#question").value=button.dataset.example; $("#topic").value=button.dataset.topic; $("#question").focus(); }));
+  $("#queryForm").addEventListener("submit",async e => {
+    e.preventDefault();
+    if (fileReading) return toast("Aguarda a leitura dos ficheiros.");
+    const question = $("#question").value.trim(); if (!question) return;
+    const button = $("#querySubmit"); button.disabled=true;
+    try { await runQuery(question,$("#topic").value); }
+    catch { toast("Não foi possível concluir a pesquisa.",true); }
+    finally { button.disabled=false; }
   });
-  const dialog = $("#sourceDialog");
-  $("#addSourceButton").addEventListener("click", () => { $("#sourceForm").reset(); $("#sourceDate").value = today(); $("#sourceFormError").textContent = ""; dialog.showModal(); });
-  $("#closeSourceDialog").addEventListener("click", () => dialog.close());
-  $("#cancelSourceDialog").addEventListener("click", () => dialog.close());
-  $("#sourceForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    const title = $("#sourceTitle").value.trim();
-    const url = $("#sourceUrl").value.trim();
-    const text = $("#sourceText").value.trim();
-    const consultedAt = $("#sourceDate").value;
-    if (!isOfficialUrl(url)) { $("#sourceFormError").textContent = "A ligação deve ser HTTPS e pertencer a um portal autorizado."; return; }
-    if (text.length < 30 || text.length > 2000000) { $("#sourceFormError").textContent = "O texto deve ter entre 30 e 2.000.000 caracteres."; return; }
-    if (!title || !consultedAt) return;
+  $("#attachFilesButton").addEventListener("click",() => $("#queryFiles").click());
+  $("#queryFiles").addEventListener("change",e => { addQueryFiles(e.target.files); e.target.value=""; });
+  const drop = $("#dropZone");
+  drop.addEventListener("click",e => { if (!e.target.closest("button")) $("#queryFiles").click(); });
+  drop.addEventListener("keydown",e => { if (e.target===drop && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); $("#queryFiles").click(); } });
+  for (const eventName of ["dragenter","dragover"]) drop.addEventListener(eventName,e => { e.preventDefault(); drop.classList.add("dragging"); });
+  for (const eventName of ["dragleave","drop"]) drop.addEventListener(eventName,e => { e.preventDefault(); drop.classList.remove("dragging"); });
+  drop.addEventListener("drop",e => addQueryFiles(e.dataTransfer.files));
+
+  $("#addCatalogButton").addEventListener("click",openCatalogDialog);
+  $("#closeCatalogDialog").addEventListener("click",() => $("#catalogDialog").close());
+  $("#cancelCatalogDialog").addEventListener("click",() => $("#catalogDialog").close());
+  $("#catalogForm").addEventListener("submit",async e => {
+    e.preventDefault();
+    const title=$("#catalogName").value.trim(), url=$("#catalogUrl").value.trim(), description=$("#catalogDescription").value.trim();
+    if (!validHttpUrl(url)) return $("#catalogError").textContent="A ligação deve utilizar HTTPS e não pode conter credenciais.";
+    if (catalog().some(s => s.url.replace(/\/$/,"") === url.replace(/\/$/,""))) return $("#catalogError").textContent="Esta ligação já está na biblioteca.";
+    catalogSettings.custom.push({id:`user-${makeId()}`,initials:title.slice(0,2).toUpperCase(),title,description:description||"Fonte personalizada — origem não verificada",type:"Personalizada",url});
+    try { await persistCatalog(); $("#catalogDialog").close(); toast("Fonte adicionada à biblioteca."); }
+    catch { catalogSettings.custom.pop(); $("#catalogError").textContent="Não foi possível guardar a fonte."; }
+  });
+  $("#restoreCatalogButton").addEventListener("click",async () => {
+    const standard = new Set(primarySources.map(s=>s.id));
+    catalogSettings.disabled = catalogSettings.disabled.filter(id=>!standard.has(id));
+    await persistCatalog(); toast("Fontes iniciais reativadas; fontes personalizadas preservadas.");
+  });
+
+  $("#addDocumentButton").addEventListener("click",openDocumentDialog);
+  $("#closeDocumentDialog").addEventListener("click",()=>$("#documentDialog").close());
+  $("#cancelDocumentDialog").addEventListener("click",()=>$("#documentDialog").close());
+  $("#documentFile").addEventListener("change",e => { $("#documentFileHint").textContent = e.target.files[0] ? `Selecionado: ${e.target.files[0].name}` : "PDF, DOCX ou texto · até 12 MB"; });
+  $("#documentForm").addEventListener("submit",async e => {
+    e.preventDefault();
+    const title=$("#documentTitle").value.trim(), url=$("#documentUrl").value.trim(), consultedAt=$("#documentDate").value, catalogId=$("#documentSource").value;
+    const file=$("#documentFile").files[0];
+    const error = $("#documentError"); error.textContent="";
+    if (url && !validHttpUrl(url)) return error.textContent="O URL da origem deve ser HTTPS e não conter credenciais.";
+    const button=$("#saveDocumentButton"); button.disabled=true; button.textContent="A processar documento…";
     try {
-      await mutation("sources", "put", { id: id(), title, url, text, consultedAt, createdAt: nowIso() });
-      dialog.close();
-      await renderSavedSources();
-      toast("Documento guardado localmente.");
-    } catch { $("#sourceFormError").textContent = "Não foi possível guardar. Verifica o espaço disponível."; }
+      let content=$("#documentText").value.trim();
+      if (file) content = `${content}\n\n${await extractFile(file)}`.trim();
+      if (content.length < 30 || content.length > MAX_DOCUMENT_TEXT) throw new Error("O documento tem de conter entre 30 e 2.000.000 caracteres pesquisáveis.");
+      await mutate("sources","put",{id:makeId(),title,url:url||null,consultedAt,catalogId,text:content,createdAt:now(),fileName:file?.name||null});
+      $("#documentDialog").close(); await renderDocuments(); await updateCounts(); toast("Documento guardado localmente.");
+    } catch(err) { error.textContent=err.message || "Não foi possível guardar o documento."; }
+    finally { button.disabled=false; button.textContent="Guardar documento"; }
   });
-  $("#exportButton").addEventListener("click", () => exportData().catch(() => toast("Falha ao exportar backup.", true)));
-  $("#importFile").addEventListener("change", async event => {
-    try { await restoreData(event.target.files[0]); }
-    catch (error) { toast(error.message || "Falha ao restaurar backup.", true); }
-    finally { event.target.value = ""; }
-  });
-  $("#clearHistoryButton").addEventListener("click", async () => {
-    if (!confirm("Eliminar definitivamente todo o histórico de consultas neste dispositivo?")) return;
-    await mutation("history", "clear");
-    toast("Histórico eliminado.");
-    renderHistory();
+
+  $("#exportButton").addEventListener("click",() => exportBackup().catch(()=>toast("Falha ao criar o backup.",true)));
+  $("#importFile").addEventListener("change",async e => { try { await restoreBackup(e.target.files[0]); } catch(err) { toast(err.message||"Erro ao restaurar backup.",true); } finally { e.target.value=""; } });
+  $("#clearHistoryButton").addEventListener("click",async () => {
+    if (!confirm("Eliminar o histórico de consultas deste dispositivo? Os documentos serão mantidos.")) return;
+    try { await mutate("history","clear"); await renderHistory(); toast("Histórico eliminado."); }
+    catch { toast("Não foi possível eliminar o histórico.",true); }
   });
 }
+
 async function start() {
-  renderPortals();
-  setupNetwork();
-  setupInstall();
-  try { db = await openDB(); setupHandlers(); showView(location.hash.replace("#", "") || "consulta"); }
-  catch {
-    toast("O armazenamento local está indisponível. Verifica as permissões do navegador.", true);
-    $$(".button").forEach(button => { if (button.id !== "installButton") button.disabled = true; });
+  renderUpdates(); setupNetwork(); setupInstall();
+  try {
+    db = await openDatabase();
+    await loadCatalog();
+    bindHandlers();
+    renderMiniSources(); renderDocumentSourceOptions();
+    await updateCounts();
+    showView(location.hash.replace("#","")||"consulta");
+  } catch(error) {
+    toast("O armazenamento local não está disponível. Verifica as permissões do navegador.",true);
+    console.error("Falha ao abrir armazenamento local:",error);
   }
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
-    });
+    const register = () => navigator.serviceWorker.register("./sw.js",{scope:"./"}).catch(()=>{});
+    if (document.readyState === "complete") register();
+    else window.addEventListener("load",register,{once:true});
   }
 }
 start();
