@@ -1,0 +1,16 @@
+{
+  "id": "./",
+  "name": "Assistente Fiscal PT",
+  "short_name": "Fiscal PT",
+  "description": "Consulta e organização de fontes fiscais portuguesas",
+  "lang": "pt-PT",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f8fc",
+  "theme_color": "#315c8e",
+  "icons": [
+    { "src": "./assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

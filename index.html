@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#315c8e" />
+  <meta name="description" content="Assistente Fiscal PT — consulta e organização de fontes fiscais oficiais." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Fiscal PT" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./assets/icon-192.png" type="image/png" />
+  <link rel="apple-touch-icon" href="./assets/icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
+  <title>Assistente Fiscal PT</title>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="brand" href="./" aria-label="Assistente Fiscal PT">
+      <span class="brand-symbol">F<span>.</span></span>
+      <span><strong>Assistente Fiscal</strong><small>PORTUGAL</small></span>
+    </a>
+    <div class="workspace-tag"><span class="status-dot"></span> Espaço pessoal <span class="tag-version">v0.1</span></div>
+    <nav class="side-nav" aria-label="Menu principal">
+      <button type="button" class="nav-link active" data-view="consulta"><span>⌕</span> Consultar</button>
+      <button type="button" class="nav-link" data-view="fontes"><span>▤</span> Fontes fiscais</button>
+      <button type="button" class="nav-link" data-view="historico"><span>◷</span> Histórico</button>
+      <button type="button" class="nav-link" data-view="atualizacoes"><span>↻</span> Atualizações</button>
+      <button type="button" class="nav-link" data-view="definicoes"><span>⚙</span> Definições</button>
+    </nav>
+    <div class="sidebar-footer"><span class="shield">✓</span><span><strong>Fontes controladas</strong><small>Apenas portais autorizados</small></span></div>
+  </aside>
+  <div class="main-shell">
+    <header class="topbar">
+      <div class="topbar-title"><span class="mobile-logo">F.</span><span id="sectionTitle">Consulta fiscal</span></div>
+      <div class="topbar-actions"><span id="networkStatus" class="network-pill">A verificar</span><button id="installButton" class="button button-outline" type="button">Instalar no PC</button></div>
+    </header>
+    <main class="content">
+      <section class="view active" id="view-consulta">
+        <div class="eyebrow">CONSULTA FISCAL PORTUGUESA</div><h1>Em que podemos ajudar?</h1>
+        <p class="lead">Organiza questões e encontra excertos em documentos oficiais guardados no dispositivo.</p>
+        <div class="info-banner"><span class="info-mark">i</span><div><strong>Versão inicial em validação</strong><p>A pesquisa local encontra apenas excertos em textos que adicionares. A geração de respostas por IA e a atualização automática ainda não estão ativas.</p></div></div>
+        <form id="queryForm" class="query-card">
+          <label class="field-label" for="question">A tua questão</label>
+          <textarea id="question" rows="4" maxlength="1500" required placeholder="Ex.: Quais os requisitos da autoliquidação de IVA na construção civil?"></textarea>
+          <div class="query-controls"><label class="select-field" for="topic"><span>Área fiscal</span><select id="topic"><option>Geral</option><option>IVA</option><option>IRC</option><option>IRS</option><option>Contabilidade</option><option>Outros</option></select></label><button class="button button-primary" type="submit">Pesquisar excertos ↗</button></div>
+        </form>
+        <section id="resultsArea" class="results-area" aria-live="polite" hidden></section>
+        <div class="section-heading"><h2>Áreas de consulta</h2><span>Seleciona uma matéria</span></div>
+        <div class="topic-grid">
+          <button class="topic-card" type="button" data-topic="IVA"><span class="topic-badge badge-blue">IVA</span><strong>Valor Acrescentado</strong><span>Taxas, isenções, dedução e autoliquidação</span><span class="topic-arrow">↗</span></button>
+          <button class="topic-card" type="button" data-topic="IRC"><span class="topic-badge badge-teal">IRC</span><strong>Rendimento Coletivo</strong><span>Gastos fiscais, tributações e benefícios</span><span class="topic-arrow">↗</span></button>
+          <button class="topic-card" type="button" data-topic="IRS"><span class="topic-badge badge-violet">IRS</span><strong>Rendimento Singular</strong><span>Categorias, retenções e deduções</span><span class="topic-arrow">↗</span></button>
+        </div>
+      </section>
+      <section class="view" id="view-fontes" hidden>
+        <div class="eyebrow">BASE DOCUMENTAL</div><h1>Fontes fiscais</h1><p class="lead">Consulta portais autorizados e adiciona os textos legais que queres pesquisar.</p>
+        <div class="info-banner"><span class="info-mark">i</span><div><strong>Importação manual</strong><p>Os links abaixo não importam automaticamente os códigos. Adiciona o texto e o URL oficial do documento para o tornar pesquisável.</p></div></div>
+        <div class="section-heading"><h2>Portais autorizados</h2><span>Fontes oficiais e complementares</span></div><div id="officialSources" class="official-grid"></div>
+        <div class="section-heading top-gap"><h2>Documentos guardados</h2><button id="addSourceButton" class="button button-primary" type="button">+ Adicionar documento</button></div>
+        <div id="savedSources" class="stack-list"></div>
+      </section>
+      <section class="view" id="view-historico" hidden>
+        <div class="eyebrow">REGISTOS LOCAIS</div><h1>Histórico de consultas</h1><p class="lead">As perguntas ficam guardadas apenas neste navegador.</p><div id="historyList" class="stack-list"></div>
+      </section>
+      <section class="view" id="view-atualizacoes" hidden>
+        <div class="eyebrow">ACOMPANHAMENTO LEGISLATIVO</div><h1>Atualizações fiscais</h1><p class="lead">Ligações oficiais para acompanhar novidades legislativas.</p>
+        <div class="warning-banner"><span class="warning-mark">!</span><div><strong>Ainda sem sincronização automática</strong><p>Nenhuma fonte é considerada atualizada apenas por estar aqui listada. O acompanhamento automático será integrado numa fase seguinte.</p></div></div>
+        <div class="section-heading"><h2>Consultar novidades</h2><span>Sites oficiais</span></div><div id="updatesLinks" class="stack-list"></div>
+      </section>
+      <section class="view" id="view-definicoes" hidden>
+        <div class="eyebrow">PREFERÊNCIAS</div><h1>Definições</h1><p class="lead">Gere os teus dados e as cópias de segurança.</p>
+        <div class="settings-card"><div class="settings-icon">↓</div><div><h2>Exportar backup</h2><p>Descarrega as fontes e o histórico num ficheiro JSON.</p><button id="exportButton" class="button button-primary" type="button">Transferir backup</button></div></div>
+        <div class="settings-card"><div class="settings-icon">↑</div><div><h2>Restaurar backup</h2><p>A restauração substitui os dados guardados neste dispositivo.</p><label class="button button-outline upload-button" for="importFile">Escolher ficheiro JSON</label><input id="importFile" type="file" accept=".json,application/json" hidden /></div></div>
+        <div class="settings-card"><div class="settings-icon">▣</div><div><h2>Armazenamento local</h2><p id="storageInfo">A calcular utilização…</p><p class="muted">Os dados não são sincronizados entre o computador e o telemóvel. Faz backups regularmente.</p></div></div>
+        <div class="settings-card"><div class="settings-icon">×</div><div><h2>Eliminar histórico</h2><p>Remove as perguntas guardadas, mas mantém os documentos.</p><button id="clearHistoryButton" class="button button-danger" type="button">Eliminar histórico</button></div></div>
+      </section>
+    </main>
+    <footer class="footer">Assistente Fiscal PT · Versão experimental · Não substitui a consulta da legislação oficial</footer>
+  </div>
+</div>
+<nav class="bottom-nav" aria-label="Menu móvel">
+  <button class="active" type="button" data-view="consulta">⌕<span>Consultar</span></button><button type="button" data-view="fontes">▤<span>Fontes</span></button><button type="button" data-view="historico">◷<span>Histórico</span></button><button type="button" data-view="atualizacoes">↻<span>Novidades</span></button><button type="button" data-view="definicoes">⚙<span>Definições</span></button>
+</nav>
+<dialog id="sourceDialog" class="source-dialog">
+  <form id="sourceForm">
+    <div class="dialog-header"><h2>Adicionar documento oficial</h2><button id="closeSourceDialog" class="icon-button" type="button" aria-label="Fechar">×</button></div>
+    <p class="muted">Cola o texto retirado de uma fonte autorizada e regista a ligação original.</p>
+    <label class="field-label" for="sourceTitle">Título</label><input id="sourceTitle" maxlength="150" required placeholder="Ex.: Código do IVA — artigo 19.º" />
+    <label class="field-label" for="sourceUrl">URL oficial</label><input id="sourceUrl" type="url" required placeholder="https://info.portaldasfinancas.gov.pt/..." />
+    <label class="field-label" for="sourceDate">Data consultada</label><input id="sourceDate" type="date" required />
+    <label class="field-label" for="sourceText">Texto</label><textarea id="sourceText" rows="8" minlength="30" required placeholder="Cola aqui o conteúdo oficial…"></textarea>
+    <p id="sourceFormError" class="form-error" role="alert"></p>
+    <div class="dialog-actions"><button id="cancelSourceDialog" class="button button-outline" type="button">Cancelar</button><button class="button button-primary" type="submit">Guardar documento</button></div>
+  </form>
+</dialog>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="./app.js" defer></script>
+</body>
+</html>
