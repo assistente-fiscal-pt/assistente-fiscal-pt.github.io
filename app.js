@@ -1,4 +1,4 @@
-/* Assistente Fiscal PT — pesquisa documental local, sem respostas automáticas de IA. */
+/* Fernando — pesquisa documental em legislação oficial indexada e anexos locais. */
 const DB_NAME = "assistente-fiscal-pt-v1"; // Mantido para preservar os dados da v0.1.
 const DB_VERSION = 2;
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
@@ -32,6 +32,7 @@ let db;
 let catalogSettings = {id:"catalog", disabled:[], custom:[]};
 let queryAttachments = [];
 let fileReading = false;
+let legalIndexCache = null;
 
 function el(tag, className, content) {
   const node = document.createElement(tag);
@@ -137,6 +138,25 @@ async function persistCatalog() {
   renderMiniSources();
   renderDocumentSourceOptions();
   await updateCounts();
+  refreshIndexStatus();
+}
+async function refreshIndexStatus() {
+  const target = $("#indexStatus");
+  if (!target) return;
+  if (!enabled("at")) { target.textContent = "Pesquisa automática da AT desativada."; target.className = "index-status warning"; return; }
+  try {
+    const index = await loadLegalIndex();
+    if (index.articleCount > 0) {
+      target.textContent = `${index.articleCount} artigos da AT disponíveis · ${formatDate(index.generatedAt)}`;
+      target.className = "index-status ready";
+    } else {
+      target.textContent = "A recolha dos artigos está pendente. Ativa a tarefa no GitHub Actions.";
+      target.className = "index-status warning";
+    }
+  } catch {
+    target.textContent = "Sem ligação ao índice oficial. Documentos locais disponíveis.";
+    target.className = "index-status warning";
+  }
 }
 async function setEnabled(id,active) {
   const list = new Set(catalogSettings.disabled);
@@ -159,7 +179,7 @@ function showView(view) {
     button.classList.toggle("active",on);
     if (on) button.setAttribute("aria-current","page"); else button.removeAttribute("aria-current");
   });
-  $("#sectionTitle").textContent = {consulta:"Nova consulta",fontes:"Biblioteca de fontes",historico:"Histórico",atualizacoes:"Atualizações",definicoes:"Definições"}[view];
+  $("#sectionTitle").textContent = {consulta:"Perguntar",fontes:"As minhas fontes",historico:"Histórico",atualizacoes:"Legislação e novidades",definicoes:"Definições"}[view];
   history.replaceState(null,"",`#${view}`);
   window.scrollTo({top:0,behavior:"instant"});
   if (view === "fontes") { renderCatalog(); renderDocuments(); }
@@ -356,8 +376,79 @@ function findMatches(question,documents) {
   }
   return results.sort((a,b)=>b.score-a.score).slice(0,8);
 }
+function searchTerms(question) {
+  const terms = keywords(question);
+  const query = normal(question);
+  const expanded = [...terms];
+  const add = (...words) => words.forEach(word => { if (!expanded.includes(word)) expanded.push(word); });
+  if (/iva|valor acrescentado/.test(query)) add("iva", "imposto", "taxas");
+  if (/percentagem|percentual|taxa|quanto/.test(query)) add("taxa", "taxas", "percentagem");
+  if (/construc|empreitad|obra/.test(query)) add("construcao", "civil", "empreitada", "obras", "autoliquidacao");
+  if (/donativ|mecenat/.test(query)) add("donativo", "donativos", "mecenato", "deducao");
+  if (/deduz|dedut/.test(query)) add("deducao", "dedutivel", "dedutibilidade", "gastos");
+  if (/fatura|faturac/.test(query)) add("fatura", "faturacao", "emissao");
+  return expanded;
+}
+async function loadLegalIndex() {
+  if (!enabled("at")) return {articles:[],reason:"A Autoridade Tributária está desativada na seleção de fontes."};
+  if (legalIndexCache && Date.now() - legalIndexCache.fetchedAt < 15 * 60 * 1000) return legalIndexCache.value;
+  const response = await fetch("./data/legal-index.json",{cache:"no-cache"});
+  if (!response.ok) throw new Error("Não foi possível obter o índice da AT.");
+  const data = await response.json();
+  if (!Array.isArray(data.articles) || !data.articles.every(a => typeof a.text === "string" && typeof a.url === "string" && a.url.startsWith("https://info.portaldasfinancas.gov.pt/"))) throw new Error("O índice recebido é inválido.");
+  legalIndexCache = {value:data,fetchedAt:Date.now()};
+  return data;
+}
+function legalMatches(question,topic,legalIndex) {
+  const terms = searchTerms(question);
+  const original = keywords(question);
+  if (!terms.length) return [];
+  const search = normal(question);
+  const matches = [];
+  for (const article of legalIndex.articles) {
+    if (topic === "IVA" && article.code !== "CIVA") continue;
+    if (topic === "IRC" && !["CIRC","EBF","LGT"].includes(article.code)) continue;
+    if (topic === "IRS" && !["CIRS","EBF","LGT"].includes(article.code)) continue;
+    const content = article.text;
+    if (!content?.trim()) continue;
+    const normText = normal(content);
+    const termHits = original.filter(t => normText.includes(t)).length;
+    const expandedHits = terms.filter(t => normText.includes(t)).length;
+    const articleNumber = (article.url.match(/(?:iva|irc|irs|bf|lgt)[-_]?(\d+)(?:[_.-]|\.aspx)/i) || [])[1];
+    let priority = expandedHits * 2 + termHits * 5;
+    if (search.includes("iva") && article.code === "CIVA") priority += 4;
+    if (/construc|empreitad|obra/.test(search) && article.code === "CIVA" && articleNumber === "2") priority += 14;
+    if (/taxa|percentagem|quanto/.test(search) && article.code === "CIVA" && articleNumber === "18") priority += 14;
+    if (/donativ|mecenat/.test(search) && article.code === "EBF") priority += 7;
+    if (priority < 6) continue;
+
+    // Apresentar apenas o excerto legal mais próximo dos termos da pergunta.
+    const lines = content.split(/\n/).filter(line => line.length > 15);
+    let best = {score:-1,text:""};
+    for (let i=0;i<lines.length;i++) {
+      let window = lines.slice(i,i+5).join(" ");
+      if (window.length > 900) window = window.slice(0,900);
+      const norm = normal(window);
+      const found = terms.filter(t => norm.includes(t));
+      let score = found.length * 2 + original.filter(t => norm.includes(t)).length * 5;
+      if (/construc|empreitad/.test(search) && /construc|empreitad/.test(norm)) score += 5;
+      if (/taxa|percentagem/.test(search) && /taxa|23\s*%|13\s*%|6\s*%/.test(norm)) score += 3;
+      if (score > best.score) best = {score,text:window};
+    }
+    if (!best.text || (best.score < 3 && priority < 15)) continue;
+    matches.push({article,score:priority+best.score,text:best.text.slice(0,860)});
+  }
+  // Evitar apresentar vários fragmentos do mesmo artigo.
+  return matches.sort((a,b) => b.score-a.score).slice(0,7);
+}
 async function runQuery(question,topic,save=true) {
   const root = $("#resultsArea"); root.hidden = false; root.replaceChildren();
+  const loading = el("div","search-loading","A consultar os textos legislativos disponíveis…");
+  root.append(loading);
+  let legalIndex = {articles:[],generatedAt:null};
+  let indexError = "";
+  try { legalIndex = await loadLegalIndex(); }
+  catch(error) { indexError = error.message || "Índice oficial indisponível."; }
   const enabledIds = new Set(enabledCatalog().map(s => s.id));
   const savedDocuments = (await all("sources")).filter(s => {
     const origin = documentCatalogId(s);
@@ -366,18 +457,36 @@ async function runQuery(question,topic,save=true) {
   const temporary = queryAttachments.map(a => ({id:a.id,title:a.name,text:a.text,url:null,consultedAt:today(),origin:"attachment",catalogId:"local"}));
   const documents = [...savedDocuments,...temporary];
   const matches = findMatches(question,documents);
-  if (save) await mutate("history","put",{id:makeId(),question,topic,createdAt:now(),matchCount:matches.length,attachmentNames:queryAttachments.map(a=>a.name),activeSources:enabledCatalog().map(s=>s.id)});
+  const articles = legalMatches(question,topic,legalIndex);
+  if (save) await mutate("history","put",{id:makeId(),question,topic,createdAt:now(),matchCount:matches.length+articles.length,attachmentNames:queryAttachments.map(a=>a.name),activeSources:enabledCatalog().map(s=>s.id)});
 
+  root.replaceChildren();
   const top = el("div","results-top");
-  const label = el("span","overline","RESULTADOS DA PESQUISA");
-  const heading = el("h2","",matches.length ? `${matches.length} excertos encontrados` : "Sem excertos encontrados");
+  const label = el("span","overline","PESQUISA FUNDAMENTADA");
+  const total = articles.length + matches.length;
+  const heading = el("h2","",total ? `${total} referências para analisar` : "Não foi possível fundamentar uma resposta");
   top.append(label,heading); root.append(top);
-  root.append(el("p","results-disclaimer","Pesquisa textual nos documentos guardados e anexos desta consulta. Não constitui parecer fiscal, resposta gerada por IA ou confirmação de legislação atualizada."));
-  if (!documents.length) {
-    root.append(emptyState("Ainda não há textos para pesquisar","As fontes selecionadas são ligações para portais. Junta um PDF/Word à pergunta ou adiciona um documento à biblioteca para obter excertos."));
-  } else if (!matches.length) {
-    root.append(emptyState("Não encontrámos correspondências","Isso não significa que não exista legislação aplicável. Experimenta outros termos ou consulta o portal oficial."));
-  } else {
+  const information = legalIndex.generatedAt ? `Índice da AT recolhido em ${formatDate(legalIndex.generatedAt)} (${legalIndex.articleCount||legalIndex.articles.length} artigos).` : "O índice da AT ainda não contém artigos recolhidos.";
+  root.append(el("p","results-disclaimer",`${information} A ferramenta localiza excertos; não gera pareceres, não valida a vigência em tempo real nem substitui a consulta do Diário da República.`));
+  if (indexError) root.append(el("p","index-warning",`A pesquisa na AT não foi concluída: ${indexError}`));
+  if (legalIndex.reason) root.append(el("p","index-warning",legalIndex.reason));
+
+  if (articles.length) {
+    const heading = el("div","result-group-heading");
+    heading.append(el("h3","","Legislação da Autoridade Tributária"),pill("Origem oficial · cópia datada","pill-official")); root.append(heading);
+    for (const match of articles) {
+      const item = el("article","result-card official-result");
+      const topRow = el("div","result-card-top");
+      topRow.append(pill(match.article.code,"pill-result"),el("strong","",match.article.title || `Artigo ${match.article.code}`));
+      item.append(topRow,el("p","",match.text));
+      const bottom = el("div","result-card-bottom");
+      bottom.append(el("small","",`Texto consultado em ${formatDate(legalIndex.generatedAt)} · verificar vigência`),link(match.article.url,"Ler artigo na AT ↗"));
+      item.append(bottom); root.append(item);
+    }
+  }
+  if (matches.length) {
+    const heading = el("div","result-group-heading");
+    heading.append(el("h3","","Documentos anexados ou guardados"),pill("Pesquisa local","pill-muted")); root.append(heading);
     for (const item of matches) {
       const card = el("article","result-card");
       const topRow = el("div","result-card-top");
@@ -389,6 +498,8 @@ async function runQuery(question,topic,save=true) {
       card.append(bottom); root.append(card);
     }
   }
+  if (!total) root.append(emptyState("Ainda não encontrei uma base suficiente","Se a recolha automática da legislação ainda não foi efetuada, é necessário executá-la no GitHub. Podes também anexar um diploma em PDF ou carregar um documento para pesquisar o texto."));
+  if (articles.length) root.append(el("p","legal-caveat","Atenção: os excertos apresentados podem não conter todas as condições, exceções e alterações aplicáveis ao caso concreto. Confirma o texto e a data de produção de efeitos nas fontes oficiais."));
   if (enabledCatalog().length) {
     const block = el("div","result-portals");
     block.append(el("strong","","Portais selecionados para conferência"));
@@ -567,6 +678,7 @@ async function start() {
     bindHandlers();
     renderMiniSources(); renderDocumentSourceOptions();
     await updateCounts();
+    await refreshIndexStatus();
     showView(location.hash.replace("#","")||"consulta");
   } catch(error) {
     toast("O armazenamento local não está disponível. Verifica as permissões do navegador.",true);
