@@ -384,7 +384,7 @@ function searchTerms(question) {
   if (/iva|valor acrescentado/.test(query)) add("iva", "imposto", "taxas");
   if (/percentagem|percentual|taxa|quanto/.test(query)) add("taxa", "taxas", "percentagem");
   if (/construc|empreitad|obra/.test(query)) add("construcao", "civil", "empreitada", "obras", "autoliquidacao");
-  if (/donativ|mecenat/.test(query)) add("donativo", "donativos", "mecenato", "deducao");
+  if (/donativ|mecenat/.test(query)) add("donativo", "donativos", "mecenato", "majoracao", "majorados", "beneficio");
   if (/deduz|dedut/.test(query)) add("deducao", "dedutivel", "dedutibilidade", "gastos");
   if (/fatura|faturac/.test(query)) add("fatura", "faturacao", "emissao");
   return expanded;
@@ -404,22 +404,29 @@ function legalMatches(question,topic,legalIndex) {
   const original = keywords(question);
   if (!terms.length) return [];
   const search = normal(question);
+  const area = topic === "Geral" ? (/\biva\b/.test(search) ? "IVA" : /\birc\b/.test(search) ? "IRC" : /\birs\b/.test(search) ? "IRS" : topic) : topic;
+  const asksAboutDonations = /donativ|mecenat/.test(search);
+  const asksAboutMajoration = /majorar|majorac|majorad/.test(search);
   const matches = [];
   for (const article of legalIndex.articles) {
-    if (topic === "IVA" && article.code !== "CIVA") continue;
-    if (topic === "IRC" && !["CIRC","EBF","LGT"].includes(article.code)) continue;
-    if (topic === "IRS" && !["CIRS","EBF","LGT"].includes(article.code)) continue;
+    if (area === "IVA" && article.code !== "CIVA") continue;
+    if (area === "IRC" && !["CIRC","EBF","LGT"].includes(article.code)) continue;
+    if (area === "IRS" && !["CIRS","EBF","LGT"].includes(article.code)) continue;
     const content = article.text;
     if (!content?.trim()) continue;
     const normText = normal(content);
+    // Evitar que termos genéricos como «dedução» devolvam artigos sem ligação ao assunto.
+    if (asksAboutDonations && !/donativ|mecenat/.test(normText)) continue;
+    if (asksAboutDonations && asksAboutMajoration && article.code !== "EBF" && !/majorad|majorac/.test(normText)) continue;
     const termHits = original.filter(t => normText.includes(t)).length;
     const expandedHits = terms.filter(t => normText.includes(t)).length;
     const articleNumber = (article.url.match(/(?:iva|irc|irs|bf|lgt)[-_]?(\d+)(?:[_.-]|\.aspx)/i) || [])[1];
     let priority = expandedHits * 2 + termHits * 5;
+    priority += terms.filter(t => normal(legalArticleLabel(article)).includes(t)).length * 10;
     if (search.includes("iva") && article.code === "CIVA") priority += 4;
     if (/construc|empreitad|obra/.test(search) && article.code === "CIVA" && articleNumber === "2") priority += 14;
-    if (/taxa|percentagem|quanto/.test(search) && article.code === "CIVA" && articleNumber === "18") priority += 14;
-    if (/donativ|mecenat/.test(search) && article.code === "EBF") priority += 7;
+    if (/taxa|percentagem|quanto/.test(search) && article.code === "CIVA" && articleNumber === "18") priority += 20;
+    if (asksAboutDonations && article.code === "EBF") priority += 18;
     if (priority < 6) continue;
 
     // Apresentar apenas o excerto legal mais próximo dos termos da pergunta.
@@ -439,7 +446,7 @@ function legalMatches(question,topic,legalIndex) {
     matches.push({article,score:priority+best.score,text:best.text.slice(0,860)});
   }
   // Evitar apresentar vários fragmentos do mesmo artigo.
-  return matches.sort((a,b) => b.score-a.score).slice(0,7);
+  return matches.sort((a,b) => b.score-a.score).filter((item,index,all) => item.score >= Math.max(14,all[0].score * .53)).slice(0,5);
 }
 function legalArticleLabel(article) {
   const lines = (article.text || "").split(/\n/).map(line => line.trim()).filter(Boolean);

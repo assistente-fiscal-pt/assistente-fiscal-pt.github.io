@@ -56,7 +56,7 @@ def discover(code: str, path: str) -> list[str]:
         if "indice" in name or "index" in name or "codigo-do" in name:
             continue
         label = link.get_text(" ", strip=True).lower()
-        if "artigo" not in label and not re.search(r"(?:iva|irs|irc|bf|lgt)[-_]?\d+", name):
+        if "artigo" not in label and not re.search(r"(?:iva|irs|irc|bf|lgt)[-_]?\d+|ebf-artigo-\d+", name):
             continue
         discovered.add(url.split("#")[0].split("?")[0])
     print(f"{code}: {len(discovered)} artigos identificados")
@@ -99,9 +99,12 @@ def article_text(soup: BeautifulSoup) -> tuple[str, str]:
 
 def main() -> None:
     prior = {}
+    previously_fetched_today = False
     if OUT.exists():
         try:
-            prior = {article["url"]: article for article in json.loads(OUT.read_text(encoding="utf-8")).get("articles", [])}
+            old_index = json.loads(OUT.read_text(encoding="utf-8"))
+            prior = {article["url"]: article for article in old_index.get("articles", [])}
+            previously_fetched_today = str(old_index.get("generatedAt", "")).startswith(datetime.now(timezone.utc).date().isoformat())
         except (OSError, ValueError, KeyError):
             pass
     new_articles = []
@@ -114,6 +117,12 @@ def main() -> None:
             urls = [url for url, item in prior.items() if item.get("code") == code]
         successes_in_code = 0
         for position, url in enumerate(urls, start=1):
+            # Numa correção no mesmo dia, conservar os artigos já obtidos e
+            # voltar a recolher o EBF, que tinha ligações ainda não reconhecidas.
+            # Nas atualizações dos dias seguintes, verificar novamente tudo.
+            if previously_fetched_today and code != "EBF" and url in prior:
+                new_articles.append(prior[url]); successes_in_code += 1
+                continue
             try:
                 soup = get_html(url)
                 title, content = article_text(soup)
