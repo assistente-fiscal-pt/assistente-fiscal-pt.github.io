@@ -1,8 +1,8 @@
 /* O âmbito é o diretório desta PWA; só removemos caches com o nosso prefixo. */
-const CACHE_NAME = "assistente-fiscal-pt-shell-v9";
+const CACHE_NAME = "assistente-fiscal-pt-shell-v10";
 const CACHE_PREFIX = "assistente-fiscal-pt-";
 const SHELL = [
-  "./", "./index.html", "./styles.css?v=0.4.1", "./app.js?v=0.4.3", "./manifest.webmanifest?v=0.4.0",
+  "./", "./index.html", "./styles.css?v=0.4.1", "./app.js?v=0.4.4", "./manifest.webmanifest?v=0.4.0",
   "./assets/icon-192.png?v=0.4.0", "./assets/icon-512.png?v=0.4.0", "./assets/icon.svg",
   "./vendor/jszip.min.js", "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"
 ];

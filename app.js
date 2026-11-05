@@ -446,7 +446,7 @@ function legalMatches(question,topic,legalIndex) {
     matches.push({article,score:priority+best.score,text:best.text.slice(0,860)});
   }
   // Evitar apresentar vários fragmentos do mesmo artigo.
-  return matches.sort((a,b) => b.score-a.score).filter((item,index,all) => item.score >= Math.max(14,all[0].score * .53)).slice(0,5);
+  return matches.sort((a,b) => b.score-a.score).filter((item,index,all) => item.score >= Math.max(14,all[0].score * .68)).slice(0,5);
 }
 function legalArticleLabel(article) {
   const lines = (article.text || "").split(/\n/).map(line => line.trim()).filter(Boolean);
