@@ -201,7 +201,8 @@ function parseReview(value) {
 }
 
 function canonical(text) {
-  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  // Pontuação tipográfica e espaços não devem invalidar uma transcrição correta.
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 function reviewHasEvidence(review, sources) {
@@ -219,6 +220,10 @@ function reviewHasEvidence(review, sources) {
 }
 
 const UNVERIFIED_ERROR = "A dupla verificação automática não conseguiu confirmar a interpretação jurídica desta resposta. Por segurança, a conclusão não será apresentada. Consulta os artigos abaixo e, se necessário, formula uma pergunta mais específica.";
+function unverified(code, origin) {
+  // O código permite diagnosticar bloqueios sem divulgar a resposta recusada nem documentos fiscais.
+  return json({ error:`${UNVERIFIED_ERROR} (Código: ${code})` }, 422, origin);
+}
 
 export default {
   async fetch(request, env) {
@@ -256,15 +261,21 @@ export default {
       const validRefs = new Set(data.sources.map(s => s.id));
       const cited = [...answer.matchAll(/\[F\d+\]/g)].map(x => x[0].slice(1,-1));
       const unknown = cited.filter(id => !validRefs.has(id));
-      if (!cited.length || unknown.length) return json({ error: UNVERIFIED_ERROR }, 422, origin);
+      if (!cited.length) return unverified("R1", origin);
+      if (unknown.length) return unverified("R2", origin);
 
       // Um segundo pedido independente procura contradições e fundamentação literal.
       const audit = await env.AI.run(MODEL, {
         messages: [{ role: "system", content: reviewSystemPrompt() }, { role: "user", content: reviewUserPrompt(data, answer) }],
         temperature: 0,
-        max_tokens: 1100
+        // O GPT-OSS usa parte do orçamento de tokens para raciocínio; 1100 pode não
+        // ser suficiente para produzir o objeto JSON final.
+        max_tokens: 3000
       });
-      if (!reviewHasEvidence(parseReview(audit), data.sources)) return json({ error: UNVERIFIED_ERROR }, 422, origin);
+      const review = parseReview(audit);
+      if (!review) return unverified("R3", origin);
+      if (review.approved !== true) return unverified("R4", origin);
+      if (!reviewHasEvidence(review, data.sources)) return unverified("R5", origin);
 
       return json({ answer, grounded:true, verification:"double-ai-review", deadlineNeedsVerification:data.deadlineNeedsVerification, sources: data.sources.map(({ id,title,url,official }) => ({ id,title,url,official })), generatedAt: new Date().toISOString() }, 200, origin);
     } catch {
