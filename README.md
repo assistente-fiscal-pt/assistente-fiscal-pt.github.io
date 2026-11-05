@@ -36,7 +36,7 @@ O ficheiro `data/legal-index.json` é atualizado pelo workflow `.github/workflow
 
 ## Ativar respostas com IA (sem instalar Node.js)
 
-O GitHub Pages mantém a app. Para gerar respostas é necessário um serviço servidor para chamar o modelo de linguagem. Este projeto usa um **Cloudflare Worker** separado que corre `@cf/openai/gpt-oss-120b` através de um binding Workers AI, com análise mais aprofundada e exigência explícita de fundamentação.
+O GitHub Pages mantém a app. Para gerar respostas é necessário um serviço servidor para chamar o modelo de linguagem. Este projeto usa um **Cloudflare Worker** separado que corre `@cf/openai/gpt-oss-120b` através de um binding Workers AI. O Worker envia mais contexto das normas e faz **duas chamadas ao modelo por pergunta**: redige e depois tenta identificar contradições, com confirmação literal de passagens citadas. Se a segunda análise não conseguir aprovar, a conclusão não é apresentada; os artigos encontrados mantêm-se disponíveis. **Isto não equivale a uma revisão por jurista nem garante que a resposta esteja correta.**
 
 1. Entra em [Cloudflare](https://dash.cloudflare.com/) e escolhe a modalidade **Free**. Não é necessário comprar um domínio ou alterar o domínio GitHub da PWA.
 2. Em **Workers & Pages**, cria um **Worker** simples com o nome `fernando-ia`, com endereço `*.workers.dev`.
@@ -50,7 +50,7 @@ Não são necessárias ferramentas de programação no computador. O Worker é c
 
 ### Plano gratuito e privacidade
 
-Cloudflare Workers AI dispõe, segundo a documentação atual, de **10.000 Neurons por dia gratuitos**. No plano Free, o limite bloqueia chamadas adicionais em vez de oferecer uso ilimitado. O modelo pode variar em disponibilidade ou desempenho, e a política de preços deve ser confirmada na [documentação da Cloudflare](https://developers.cloudflare.com/workers-ai/platform/pricing/). A aplicação continua utilizável para consulta documental quando o serviço estiver indisponível.
+Cloudflare Workers AI dispõe, segundo a documentação atual, de **10.000 Neurons por dia gratuitos**. Cada pergunta usa duas inferências e mais contexto legal, pelo que consome uma maior parte da quota e poderá demorar mais. No plano Free, o limite bloqueia chamadas adicionais em vez de oferecer uso ilimitado. O modelo pode variar em disponibilidade ou desempenho, e a política de preços deve ser confirmada na [documentação da Cloudflare](https://developers.cloudflare.com/workers-ai/platform/pricing/). A aplicação continua utilizável para consulta documental quando o serviço estiver indisponível.
 
 Não coloques dados fiscais de clientes ou documentos confidenciais no repositório (é público). O Worker não guarda os pedidos numa base de dados, mas a Cloudflare recebe a pergunta e os excertos autorizados para processar a inferência. Por defeito, os documentos pessoais não são enviados. A Cloudflare declara que não utiliza o conteúdo dos clientes no Workers AI para treinar os modelos; confirma a [política de utilização de dados](https://developers.cloudflare.com/workers-ai/platform/data-usage/) antes de usar dados profissionais protegidos.
 
