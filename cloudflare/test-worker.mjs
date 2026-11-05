@@ -42,6 +42,11 @@ test("health não afirma que o serviço está pronto sem IA e secret",async () =
   assert.deepEqual(await response.json(),{service:"Fernando",ready:false});
 });
 
+test("health não afirma que a configuração está pronta com um secret curto",async () => {
+  const response = await worker.fetch(request("/health","GET"),{AI:{run:async()=>({})},FERNANDO_ACCESS_KEY:"curto"});
+  assert.deepEqual(await response.json(),{service:"Fernando",ready:false});
+});
+
 test("chave incorreta bloqueia inferência",async () => {
   const fake = environment();
   const response = await worker.fetch(request("/answer","POST",sample,{"x-fernando-key":"segredo-incorreto"}),fake.config);
@@ -58,6 +63,35 @@ test("faz uma resposta com referências validadas",async () => {
   assert.match(result.answer,/\[F1\]/);
   assert.equal(result.sources[0].url,sample.sources[0].url);
   assert.equal(fake.calls,1);
+});
+
+test("lê a resposta de Chat Completions devolvida pelo GPT-OSS",async () => {
+  const expected = "A regra encontra-se no artigo 41.º. [F1]";
+  const fake = environment();
+  fake.config.AI.run = async () => ({choices:[{message:{role:"assistant",content:expected},finish_reason:"stop"}]});
+  const response = await worker.fetch(request("/answer"),fake.config);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).answer,expected);
+});
+
+test("lê o texto final da API Responses e ignora o raciocínio",async () => {
+  const expected = "A regra encontra-se no artigo 41.º. [F1]";
+  const fake = environment();
+  fake.config.AI.run = async () => ({output:[
+    {type:"reasoning",summary:[{type:"summary_text",text:"Raciocínio não visível"}]},
+    {type:"message",role:"assistant",content:[{type:"output_text",text:expected}]}
+  ]});
+  const response = await worker.fetch(request("/answer"),fake.config);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).answer,expected);
+});
+
+test("aceita texto de conteúdo estruturado na resposta do modelo",async () => {
+  const fake = environment();
+  fake.config.AI.run = async () => ({choices:[{message:{content:[{type:"text",text:"É necessário cumprir a obrigação. [F1]"}]}}]});
+  const response = await worker.fetch(request("/answer"),fake.config);
+  assert.equal(response.status,200);
+  assert.match((await response.json()).answer,/\[F1\]/);
 });
 
 test("sinaliza prazo do mês corrente sem Agenda Fiscal atual",async () => {
