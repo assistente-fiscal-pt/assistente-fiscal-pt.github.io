@@ -2,7 +2,7 @@
 
 Aplicação PWA de apoio à organização de consultas e fontes fiscais portuguesas. Este repositório publica a aplicação num domínio GitHub Pages próprio, separado das aplicações da conta `universidadechat-ux`.
 
-## Funcionalidades da versão 0.4
+## Funcionalidades da versão 0.5
 
 - Instalação no computador ou telemóvel a partir do navegador.
 - Biblioteca editável: ativar/desativar fontes, adicionar fontes HTTPS personalizadas e removê-las.
@@ -15,8 +15,12 @@ Aplicação PWA de apoio à organização de consultas e fontes fiscais portugue
 - Histórico, documentos, preferências de fontes e backups v2 guardados localmente no navegador (IndexedDB); compatibilidade com backups v1.
 - Interface disponível offline após a primeira visita; ligações externas exigem Internet.
 - Identidade visual «Fernando» e ícone próprio; domínio e identificador de armazenamento preservados.
+- Respostas automáticas com explicação, referências `[F1]`, `[F2]` e ligações aos artigos, quando o serviço de IA opcional estiver configurado.
+- Motor de IA num **Cloudflare Worker independente**. Usa a seleção dos artigos da AT e, apenas após autorização expressa em cada consulta, excertos de documentos pessoais.
+- Campo de acesso ao Worker em Definições. O endereço fica na base de dados local; a palavra-passe fica apenas na sessão do navegador e **não** vai para o backup nem para o GitHub.
+- O Fernando indica quando não dispõe de fontes adequadas, quando a IA falha ou quando não foi possível validar as referências apresentadas.
 
-**Limitações:** não existe IA conversacional, pesquisa em tempo real nem validação automática da vigência. A recolha automática depende de páginas da AT e da execução do GitHub Actions; é uma cópia datada, não autenticada e pode estar incompleta. Não há sincronização entre dispositivos. Os anexos da pergunta são temporários, salvo se forem guardados explicitamente na biblioteca. Os excertos não são pareceres fiscais nem garantias de exatidão/vigência. Confirma a redação aplicável e as datas de entrada em vigor no Diário da República.
+**Limitações:** a IA só funciona após configurar o Worker na Cloudflare; a versão publicada no GitHub, por si só, continua a ser uma PWA estática. A IA não efetua pesquisa jurídica em tempo real nem valida automaticamente a vigência. A recolha automática depende de páginas da AT e da execução do GitHub Actions; é uma cópia datada e pode estar incompleta. As fontes DR, CNC, EUR-Lex e OCC só são pesquisáveis quando os documentos correspondentes são guardados localmente (e enviados à IA mediante consentimento). Não há sincronização entre dispositivos. Os anexos da pergunta são temporários, salvo se forem guardados explicitamente na biblioteca. As respostas são geradas por modelo e podem conter erros; não substituem um parecer fiscal. Confirma a redação, eventuais alterações, os efeitos temporais e os prazos na fonte oficial atual.
 
 Os componentes de leitura PDF e Word incluem as licenças originais em `vendor/` (PDF.js — Apache 2.0; JSZip — MIT).
 
@@ -29,3 +33,25 @@ Este repositório tem de ser público para utilizar GitHub Pages no plano gratui
 ### Índice oficial de consulta
 
 O ficheiro `data/legal-index.json` é atualizado pelo workflow `.github/workflows/atualizar-legislacao.yml` (execução programada e manual). O script `scripts/update_legal_index.py` obtém artigos diretamente do Portal das Finanças e preserva os textos anteriores quando falha pontualmente a leitura de uma página. Os textos recolhidos são servidos estaticamente pelo GitHub Pages e qualquer pessoa pode consultar o índice público. A data da última recolha surge em cada pesquisa, para evitar confundi-la com confirmação de vigência.
+
+## Ativar respostas com IA (sem instalar Node.js)
+
+O GitHub Pages mantém a app. Para gerar respostas é necessário um serviço servidor para chamar o modelo de linguagem. Este projeto usa um **Cloudflare Worker** separado que corre `@cf/openai/gpt-oss-20b` através de um binding Workers AI.
+
+1. Entra em [Cloudflare](https://dash.cloudflare.com/) e escolhe a modalidade **Free**. Não é necessário comprar um domínio ou alterar o domínio GitHub da PWA.
+2. Em **Workers & Pages**, cria um **Worker** simples com o nome `fernando-ia`, com endereço `*.workers.dev`.
+3. No Worker, abre **Edit Code**. Substitui o código inicial pelo conteúdo integral de [`cloudflare/fernando-worker.js`](./cloudflare/fernando-worker.js) e clica em **Deploy**.
+4. Abre **Settings → Bindings → Add binding** (a posição varia consoante a interface). Seleciona **Workers AI** e atribui-lhe o nome exato `AI`. Guarda a configuração.
+5. Em **Settings → Variables and Secrets**, adiciona uma variável do tipo **Secret**, chamada `FERNANDO_ACCESS_KEY`. Define uma frase-passe aleatória longa com **pelo menos 16 caracteres**, preferencialmente 32 ou mais. Nunca a guardes num ficheiro público nem a partilhes por chat. Guarda e volta a publicar, se o painel solicitar.
+6. Na aplicação Fernando, abre **Definições → Ligar o Fernando à IA**. Introduz o endereço `https://...workers.dev` e **a mesma frase-passe**. Escolhe **Guardar ligação** e **Testar serviço**.
+7. Volta a **Perguntar ao Fernando**: o botão passa a **Obter resposta fundamentada**. Verifica se surgem a resposta, a fundamentação e referências clicáveis. Para permitir análise de ficheiros próprios, é necessário marcar a autorização na própria pergunta.
+
+Não são necessárias ferramentas de programação no computador. O Worker é chamado apenas pela PWA publicada em `https://assistente-fiscal-pt.github.io` e exige a frase-passe para utilizar a IA. Se consultares diretamente o endereço do Worker, a resposta `403` é esperada: o serviço só aceita pedidos com a origem da aplicação. O endpoint `/health` apenas confirma a existência do binding e do Secret; só uma pergunta real valida a frase-passe e o modelo.
+
+### Plano gratuito e privacidade
+
+Cloudflare Workers AI dispõe, segundo a documentação atual, de **10.000 Neurons por dia gratuitos**. No plano Free, o limite bloqueia chamadas adicionais em vez de oferecer uso ilimitado. O modelo pode variar em disponibilidade ou desempenho, e a política de preços deve ser confirmada na [documentação da Cloudflare](https://developers.cloudflare.com/workers-ai/platform/pricing/). A aplicação continua utilizável para consulta documental quando o serviço estiver indisponível.
+
+Não coloques dados fiscais de clientes ou documentos confidenciais no repositório (é público). O Worker não guarda os pedidos numa base de dados, mas a Cloudflare recebe a pergunta e os excertos autorizados para processar a inferência. Por defeito, os documentos pessoais não são enviados. A Cloudflare declara que não utiliza o conteúdo dos clientes no Workers AI para treinar os modelos; confirma a [política de utilização de dados](https://developers.cloudflare.com/workers-ai/platform/data-usage/) antes de usar dados profissionais protegidos.
+
+Teste local de validações do Worker: `node --test cloudflare/test-worker.mjs` (apenas para quem desenvolve, não necessário para utilização da app).

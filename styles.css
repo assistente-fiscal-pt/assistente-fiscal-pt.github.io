@@ -357,3 +357,38 @@ select{font-size:13px;border-color:#e0e4dc;border-radius:10px;color:#475b4f;min-
 @media(max-width:1020px){.sidebar{width:210px}.workspace-grid{grid-template-columns:1fr}.research-column{grid-template-columns:1fr 1fr}}
 @media(max-width:780px){.sidebar{display:none}.topbar-logo{display:grid}.topbar{height:66px}.content{padding:34px 18px 86px}.bottom-nav{background:#fdfcf8;border-top-color:#e3e7dc}.bottom-nav button.active{background:#edf3e9;color:#3b7961}.footer{padding-bottom:100px}}
 @media(max-width:600px){h1{font-size:37px}.lead{font-size:13px}.question-card{padding:21px 18px}.question-card textarea{font-size:14px}.drop-zone{gap:10px}.workspace-grid{gap:20px}.research-column{grid-template-columns:1fr}.example-list,.stats-row,.settings-grid{grid-template-columns:1fr}.page-heading{align-items:flex-start}.result-card{padding:17px}.footer{gap:8px}.mode-notice p{font-size:11px}}
+
+/* 0.5 — motor de respostas fundamentadas e ligação segura à IA. */
+.notice-link{flex:none;white-space:nowrap;margin-left:auto;font-weight:750}
+.privacy-consent{display:flex;align-items:flex-start;gap:10px;margin:15px 0 0;cursor:pointer;color:#647268;font-size:11px;line-height:1.6}
+.privacy-consent input{width:16px;height:16px;flex:none;accent-color:#31594c;margin:2px 0 0}
+.ai-settings-card{background:#fff;border:1px solid #e1e8df;border-radius:18px;padding:28px 32px;margin:2px 0 24px;box-shadow:0 8px 35px #38433408}
+.ai-settings-intro{display:flex;gap:19px;align-items:flex-start;margin-bottom:26px}
+.ai-settings-mark{width:55px;height:55px;display:grid;place-items:center;flex:none;background:#31594c;border-radius:14px;color:#fff;font:600 35px Georgia,serif;letter-spacing:-3px}
+.ai-settings-intro h2{font:600 29px Georgia,serif;margin:8px 0 8px;color:#294c3b}
+.ai-settings-intro p{font-size:12px;color:#79877a;line-height:1.65;max-width:700px;margin:0}
+.ai-settings-form{display:grid;grid-template-columns:1fr;max-width:750px}
+.ai-settings-form>.field-label{margin:0 0 8px;font-size:12px}
+.ai-settings-form>input{width:100%;background:#fafbf8;border:1px solid #dce4d9;border-radius:11px;padding:13px 15px;min-height:47px;font-size:13px;color:#345244;margin:0 0 19px}
+.ai-settings-actions{display:flex;gap:10px;flex-wrap:wrap;margin:5px 0 10px}
+.ai-connection-status{font-size:12px;color:#4c8062;margin:4px 0 10px;line-height:1.5}
+.ai-settings-card>.fine-print{font-size:11px;color:#889688;line-height:1.7;border-top:1px solid #edf0e8;margin:13px 0 0;padding-top:15px}
+.ai-answer{background:linear-gradient(140deg,#fff 0%,#fbfdf8 100%);border:1px solid #d9e6dc;border-radius:18px;padding:27px 31px;margin:20px 0 23px;box-shadow:0 12px 38px #31554812}
+.answer-meta{display:flex;align-items:center;gap:12px;padding-bottom:17px;border-bottom:1px solid #e9ede5;flex-wrap:wrap}
+.answer-meta .overline{color:#638472}
+.answer-avatar{display:grid;place-items:center;background:#325c4d;color:#fff;border-radius:10px;width:35px;height:35px;font:600 23px Georgia,serif;letter-spacing:-2px}
+.answer-meta .pill{margin-left:auto}
+.answer-body{padding-top:13px}
+.answer-body h3{font:600 18px Georgia,serif;color:#2f5141;margin:20px 0 10px}
+.answer-body p{font-size:14px;color:#344b3b;line-height:1.85;margin:0 0 11px;white-space:pre-wrap}
+.answer-body .source-link,.answer-citation{background:#e8f1e8;border-radius:6px;padding:2px 6px;font-size:11px;font-weight:700;margin-left:2px;color:#376d50;white-space:nowrap}
+.answer-caveat{font-size:11px;line-height:1.65;color:#8b937d;border-top:1px solid #e9ede5;margin:18px 0 0;padding-top:13px}
+.result-evidence-heading{font:600 23px Georgia,serif;color:#355744;margin:25px 0 8px}
+.answer-loading{display:grid;gap:10px;min-height:120px;align-content:center;background:#f1f5ee;color:#577964}
+.answer-loading p{margin:0;font-size:13px}
+.ai-invite{padding:19px 21px;background:#f0f4ed;border:1px solid #dfe9dc;border-radius:12px;margin:19px 0}
+.ai-invite strong{color:#345946;font-size:14px}
+.ai-invite p{font-size:12px;color:#698170;line-height:1.6;margin:7px 0 13px}
+.ai-answer>strong{font-size:14px;color:#365e4c}
+.ai-answer>p{font-size:12px;line-height:1.7;color:#647b68}
+@media(max-width:780px){.ai-settings-card{padding:22px 20px}.ai-answer{padding:20px 18px}.answer-body p{font-size:13px}.mode-notice{flex-wrap:wrap}.notice-link{margin-left:35px}}

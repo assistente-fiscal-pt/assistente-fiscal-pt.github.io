@@ -10,7 +10,7 @@
   <link rel="manifest" href="./manifest.webmanifest?v=0.4.0" />
   <link rel="icon" href="./assets/icon-192.png?v=0.4.0" type="image/png" />
   <link rel="apple-touch-icon" href="./assets/icon-192.png?v=0.4.0" />
-  <link rel="stylesheet" href="./styles.css?v=0.4.1" />
+  <link rel="stylesheet" href="./styles.css?v=0.5.0" />
   <title>Fernando — Assistente Fiscal</title>
 </head>
 <body>
@@ -46,13 +46,13 @@
     <main class="content">
       <section class="view active" id="view-consulta">
         <div class="page-heading">
-          <div><div class="eyebrow">O TEU ASSISTENTE DE PESQUISA FISCAL</div><h1>Vamos ao que interessa<span class="title-punctuation">.</span></h1><p class="lead">Coloca uma questão. O Fernando procura os artigos relevantes e mostra-te onde confirmar a informação.</p></div>
+          <div><div class="eyebrow">O TEU ASSISTENTE FISCAL</div><h1>Vamos ao que interessa<span class="title-punctuation">.</span></h1><p class="lead">Faz uma pergunta. O Fernando prepara uma resposta objetiva e fundamentada na legislação selecionada.</p></div>
           <span class="edition-label">PORTUGAL · LEGISLAÇÃO FISCAL</span>
         </div>
 
         <div class="workspace-grid">
           <div class="main-column">
-            <div class="mode-notice"><span class="notice-icon">✓</span><p><strong>Pesquisa em legislação da AT e nos teus documentos.</strong> O Fernando apresenta artigos e excertos fundamentados. Não produz ainda respostas automáticas por IA, nem garante a vigência da lei em tempo real.</p></div>
+            <div class="mode-notice"><span class="notice-icon">✓</span><p id="modeNoticeText"><strong>Pesquisa na legislação fiscal.</strong> Para receber respostas explicadas com IA, liga o serviço gratuito em Definições.</p><button type="button" class="text-link notice-link" data-view="definicoes">Ligar IA →</button></div>
 
             <form class="question-card" id="queryForm">
               <div class="card-topline"><div class="card-label"><span class="card-label-dot"></span> A TUA PERGUNTA</div><span class="card-index">CONSULTA FISCAL</span></div>
@@ -67,9 +67,10 @@
                 </div>
                 <input id="queryFiles" type="file" multiple accept=".pdf,.docx,.txt,.md,.csv,.json,.html,.htm" hidden />
                 <div id="attachedFiles" class="attachment-list" aria-live="polite"></div>
+                <label class="privacy-consent"><input id="sendDocumentsToAI" type="checkbox" /> <span>Autorizo enviar à IA os excertos relevantes dos meus documentos e anexos para analisar esta pergunta. Sem esta opção, os ficheiros ficam apenas no dispositivo.</span></label>
               </div>
 
-              <div class="query-footer"><label class="select-field" for="topic"><span>Área da consulta</span><select id="topic"><option>Geral</option><option>IVA</option><option>IRC</option><option>IRS</option><option>Contabilidade</option><option>Outros</option></select></label><button class="button button-primary button-large" id="querySubmit" type="submit"><span>Procurar legislação</span><span class="button-arrow">→</span></button></div>
+              <div class="query-footer"><label class="select-field" for="topic"><span>Área da consulta</span><select id="topic"><option>Geral</option><option>IVA</option><option>IRC</option><option>IRS</option><option>Contabilidade</option><option>Outros</option></select></label><button class="button button-primary button-large" id="querySubmit" type="submit"><span id="querySubmitLabel">Procurar legislação</span><span class="button-arrow">→</span></button></div>
             </form>
 
             <section id="resultsArea" class="results-area" aria-live="polite" hidden></section>
@@ -84,7 +85,7 @@
 
           <aside class="research-column" aria-label="Fontes para esta pesquisa">
             <div class="panel sources-panel"><div class="panel-heading"><span class="overline">FONTES DE PESQUISA</span></div><h2>Tu escolhes onde procurar.</h2><p>A AT é pesquisada através de um índice de legislação. Os restantes portais são ligações para consulta ou fontes dos teus documentos.</p><div class="index-status" id="indexStatus">A verificar a legislação disponível…</div><div id="querySourceList" class="mini-source-list"></div><div class="panel-footer"><span id="activeSourcesCount">0 fontes ativas</span><button class="text-link" type="button" data-view="fontes">Gerir fontes →</button></div></div>
-            <div class="panel context-panel"><div class="context-icon">§</div><strong>Respostas com origem identificada.</strong><p>Sem artigos encontrados, o Fernando não inventa uma resposta. Confirma sempre as condições e a vigência do diploma.</p><button type="button" class="text-link" data-view="fontes">Ver biblioteca →</button></div>
+            <div class="panel context-panel"><div class="context-icon">§</div><strong>Explicações sustentadas na lei.</strong><p>As respostas com IA indicarão os artigos utilizados e o que precisa de confirmação. Nunca substituem a verificação da legislação em vigor.</p><button type="button" class="text-link" data-view="fontes">Ver biblioteca →</button></div>
           </aside>
         </div>
       </section>
@@ -112,6 +113,18 @@
 
       <section class="view" id="view-definicoes" hidden>
         <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> PREFERÊNCIAS</div><h1>Definições <em>e segurança.</em></h1><p class="lead">Gere os dados locais, as cópias de segurança e o armazenamento.</p></div></div>
+        <div class="ai-settings-card">
+          <div class="ai-settings-intro"><span class="ai-settings-mark">f.</span><div><span class="overline">RESPOSTAS COM INTELIGÊNCIA ARTIFICIAL</span><h2>Ligar o Fernando à IA</h2><p>Serviço externo independente no plano gratuito da Cloudflare. Responde às perguntas com explicações e referências aos artigos, mas necessita de configuração inicial.</p></div></div>
+          <form id="aiSettingsForm" class="ai-settings-form">
+            <label class="field-label" for="aiEndpoint">Endereço do teu serviço Cloudflare Worker</label>
+            <input id="aiEndpoint" type="url" autocomplete="url" placeholder="https://fernando-ia.teu-nome.workers.dev" />
+            <label class="field-label" for="aiAccessKey">Palavra-passe de acesso (apenas nesta sessão)</label>
+            <input id="aiAccessKey" type="password" autocomplete="off" placeholder="Palavra-passe definida no Secret FERNANDO_ACCESS_KEY" />
+            <div class="ai-settings-actions"><button type="submit" class="button button-primary">Guardar ligação</button><button id="aiTestButton" type="button" class="button button-outline">Testar serviço</button><button id="aiDisconnectButton" type="button" class="button button-quiet">Desligar IA</button></div>
+            <p id="aiConnectionStatus" class="ai-connection-status" aria-live="polite">IA ainda não configurada.</p>
+          </form>
+          <p class="fine-print">O endereço fica guardado só neste navegador. A palavra-passe não entra nos backups nem no GitHub; é esquecida ao fechar esta sessão. A pergunta e os excertos legais selecionados são enviados à Cloudflare quando a IA está ativa. Os teus documentos só são enviados se autorizares em cada consulta. Não envies dados de clientes ou informação confidencial sem autorização.</p>
+        </div>
         <div class="settings-grid">
           <div class="setting-card"><div class="setting-icon">↓</div><h2>Exportar backup</h2><p>Guarda documentos, histórico e fontes personalizadas num ficheiro JSON.</p><button id="exportButton" type="button" class="button button-primary">Transferir backup</button></div>
           <div class="setting-card"><div class="setting-icon">↑</div><h2>Restaurar backup</h2><p>Restaura uma cópia anterior. Os dados atuais serão substituídos após confirmação.</p><label class="button button-outline upload-label" for="importFile">Escolher backup JSON</label><input id="importFile" type="file" accept=".json,application/json" hidden /></div>
@@ -132,6 +145,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 <script src="./vendor/jszip.min.js" defer></script>
-<script src="./app.js?v=0.4.4" defer></script>
+<script src="./app.js?v=0.5.0" defer></script>
 </body>
 </html>

@@ -33,6 +33,8 @@ let catalogSettings = {id:"catalog", disabled:[], custom:[]};
 let queryAttachments = [];
 let fileReading = false;
 let legalIndexCache = null;
+let aiEndpoint = "";
+let aiAccessKey = "";
 
 function el(tag, className, content) {
   const node = document.createElement(tag);
@@ -43,6 +45,12 @@ function el(tag, className, content) {
 function validHttpUrl(value) {
   try { const url = new URL(value); return url.protocol === "https:" && !!url.hostname && !url.username && !url.password; }
   catch { return false; }
+}
+function validWorkerUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname.endsWith(".workers.dev") && url.hostname.length > ".workers.dev".length && !url.username && !url.password && (url.pathname === "/" || !url.pathname) && !url.search && !url.hash;
+  } catch { return false; }
 }
 function link(url, label = "Consultar portal ↗") {
   const a = el("a", "source-link", label);
@@ -132,6 +140,57 @@ async function loadCatalog() {
     catalogSettings = {id:"catalog",disabled:stored.disabled.filter(x => typeof x === "string"),custom:stored.custom.filter(x => x && typeof x.id === "string" && validHttpUrl(x.url))};
   }
 }
+async function loadAISettings() {
+  const saved = await get("settings","ai");
+  aiEndpoint = saved && validWorkerUrl(saved.endpoint) ? new URL(saved.endpoint).origin : "";
+  try { aiAccessKey = sessionStorage.getItem("fernando-ai-session-key") || ""; }
+  catch { aiAccessKey = ""; }
+  updateAIState();
+}
+function updateAIState() {
+  const configured = !!(aiEndpoint && aiAccessKey);
+  const notice = $("#modeNoticeText");
+  if (notice) {
+    notice.replaceChildren();
+    const headline = el("strong","",configured ? "O Fernando está preparado para responder com IA." : "Pesquisa na legislação fiscal.");
+    notice.append(headline,document.createTextNode(configured ? " As respostas incluem fundamentação e links para as fontes, com indicação de limites e incertezas." : aiEndpoint ? " Indica a palavra-passe nas Definições para obter respostas automáticas." : " Para receber respostas explicadas com IA, liga o serviço gratuito em Definições."));
+  }
+  const button = $("#querySubmitLabel");
+  if (button) button.textContent = configured ? "Obter resposta fundamentada" : "Procurar legislação";
+  const linkButton = $(".notice-link");
+  if (linkButton) linkButton.hidden = configured;
+  const status = $("#aiConnectionStatus");
+  if (status) status.textContent = configured ? "Ligação guardada. Podes testar o serviço ou começar uma consulta." : aiEndpoint ? "Endereço guardado. Falta a palavra-passe desta sessão." : "IA ainda não configurada.";
+}
+function showAISettings() {
+  $("#aiEndpoint").value = aiEndpoint;
+  $("#aiAccessKey").value = aiAccessKey;
+  updateAIState();
+}
+async function persistAISettings() {
+  const endpoint = $("#aiEndpoint").value.trim();
+  const key = $("#aiAccessKey").value.trim();
+  if (endpoint && !validWorkerUrl(endpoint)) throw new Error("Introduz um endereço HTTPS válido terminado em .workers.dev, sem caminhos adicionais.");
+  if (endpoint && key.length < 16) throw new Error("A palavra-passe deve ter pelo menos 16 caracteres.");
+  aiEndpoint = endpoint ? new URL(endpoint).origin : "";
+  aiAccessKey = endpoint ? key : "";
+  await mutate("settings","put",{id:"ai",endpoint:aiEndpoint});
+  try { if (aiAccessKey) sessionStorage.setItem("fernando-ai-session-key",aiAccessKey); else sessionStorage.removeItem("fernando-ai-session-key"); }
+  catch { /* O uso de memória nesta sessão continua a funcionar. */ }
+  updateAIState();
+}
+async function testAIConnection() {
+  if (!aiEndpoint || !aiAccessKey) throw new Error("Guarda primeiro o endereço e a palavra-passe.");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(`${aiEndpoint}/health`,{method:"GET",cache:"no-store",signal:controller.signal});
+    if (!response.ok) throw new Error("O serviço recusou a ligação. Confirma o endereço do Worker.");
+    const result = await response.json();
+    if (!result.ready) throw new Error("O Worker existe, mas falta o binding AI ou o Secret FERNANDO_ACCESS_KEY.");
+    return "Serviço disponível. Faz uma pergunta para validar também a palavra-passe e o modelo.";
+  } finally { clearTimeout(timer); }
+}
 async function persistCatalog() {
   await mutate("settings","put",catalogSettings);
   await renderCatalog();
@@ -184,7 +243,7 @@ function showView(view) {
   window.scrollTo({top:0,behavior:"instant"});
   if (view === "fontes") { renderCatalog(); renderDocuments(); }
   if (view === "historico") renderHistory();
-  if (view === "definicoes") renderStorage();
+  if (view === "definicoes") { renderStorage(); showAISettings(); }
 }
 function makeToggle(source,active,compact=false) {
   const label = el("label",compact ? "toggle toggle-small" : "toggle");
@@ -387,6 +446,7 @@ function searchTerms(question) {
   if (/donativ|mecenat/.test(query)) add("donativo", "donativos", "mecenato", "majoracao", "majorados", "beneficio");
   if (/deduz|dedut/.test(query)) add("deducao", "dedutivel", "dedutibilidade", "gastos");
   if (/fatura|faturac/.test(query)) add("fatura", "faturacao", "emissao");
+  if (/declarac|periodic|mensal|prazo|enviar|entreg|submeter/.test(query)) add("declaracao", "periodica", "mensal", "prazo", "entrega", "apresentacao", "transmissao");
   return expanded;
 }
 async function loadLegalIndex() {
@@ -426,6 +486,7 @@ function legalMatches(question,topic,legalIndex) {
     if (search.includes("iva") && article.code === "CIVA") priority += 4;
     if (/construc|empreitad|obra/.test(search) && article.code === "CIVA" && articleNumber === "2") priority += 14;
     if (/taxa|percentagem|quanto/.test(search) && article.code === "CIVA" && articleNumber === "18") priority += 20;
+    if (/declarac|periodic|mensal/.test(search) && article.code === "CIVA" && (articleNumber === "41" || /artigo\s+41\b/.test(normText.slice(0,500)))) priority += 55;
     if (asksAboutDonations && article.code === "EBF") priority += 18;
     if (priority < 6) continue;
 
@@ -460,6 +521,67 @@ function legalArticleLabel(article) {
   const number = article.url.match(/(?:iva|irc|irs|bf|lgt)[-_]?(\d+[a-z]?)(?:[_.-]|\.aspx)/i)?.[1];
   return `${article.code}${number ? ` · Artigo ${number}` : " · Disposição legal"}`;
 }
+function aiRequestSources(articles,matches,legalIndex) {
+  const sources = articles.map(match => ({
+    type:"official",title:legalArticleLabel(match.article),code:match.article.code,url:match.article.url,
+    text:`Excerto mais pertinente:\n${match.text}\n\nContexto do artigo:\n${match.article.text.slice(0,2050)}`.slice(0,3200)
+  }));
+  if ($("#sendDocumentsToAI")?.checked) {
+    for (const item of matches.slice(0,Math.max(0,8-sources.length))) {
+      sources.push({type:"personal",title:item.document.title,text:`${item.text}\n\n${item.document.text.slice(0,2100)}`.slice(0,3100),url:null});
+    }
+  }
+  return sources.slice(0,8);
+}
+async function requestAIAnswer(question,topic,sources,legalIndex) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 65000);
+  try {
+    const response = await fetch(`${aiEndpoint}/answer`,{
+      method:"POST",mode:"cors",cache:"no-store",signal:controller.signal,
+      headers:{"content-type":"application/json","x-fernando-key":aiAccessKey},
+      body:JSON.stringify({question,topic,sources,consultedAt:legalIndex.generatedAt||""})
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Falha de ligação à IA (${response.status}).`);
+    if (!result.answer || typeof result.answer !== "string" || !Array.isArray(result.sources)) throw new Error("A IA devolveu um formato inesperado.");
+    return result;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("A resposta demorou demasiado tempo. Tenta uma pergunta mais específica.");
+    if (error instanceof TypeError) throw new Error("Não foi possível contactar a Cloudflare. Confirma o endereço do Worker e as permissões de ligação.");
+    throw error;
+  } finally { clearTimeout(timeout); }
+}
+function appendCitedText(container,line,sourceMap) {
+  let cursor = 0;
+  for (const match of line.matchAll(/\[F\d+\]/g)) {
+    container.append(document.createTextNode(line.slice(cursor,match.index)));
+    const id = match[0].slice(1,-1),source = sourceMap.get(id);
+    if (source?.url && validHttpUrl(source.url)) container.append(link(source.url,match[0]));
+    else container.append(el("span","answer-citation",match[0]));
+    cursor = match.index+match[0].length;
+  }
+  container.append(document.createTextNode(line.slice(cursor)));
+}
+function renderAIAnswer(result,container) {
+  container.replaceChildren(); container.classList.remove("answer-loading");
+  const meta = el("div","answer-meta");
+  meta.append(el("span","answer-avatar","f."),el("span","overline","RESPOSTA DO FERNANDO"),pill(result.grounded ? "Com referências" : "Requer verificação",result.grounded ? "pill-official" : "pill-muted"));
+  container.append(meta);
+  if (!result.grounded) container.append(el("p","index-warning","A resposta não contém referências válidas suficientes. Consulta os excertos e confirma todas as afirmações antes de a utilizar."));
+  if (result.deadlineNeedsVerification) container.append(el("p","index-warning","Prazo do mês em curso: o Fernando não consultou uma Agenda Fiscal oficial atualizada. Confirma a data-limite e eventuais prorrogações na AT antes de submeter a declaração."));
+  const body = el("div","answer-body");
+  const refs = new Map(result.sources.map(item => [item.id,item]));
+  for (const raw of result.answer.split(/\n+/)) {
+    const line = raw.trim(); if (!line) continue;
+    const heading = line.replace(/^[#*\s]+|[#*\s:]+$/g,"").toUpperCase();
+    if (["RESPOSTA DIRETA","FUNDAMENTAÇÃO","FUNDAMENTACAO","CONFIRMAÇÕES NECESSÁRIAS","CONFIRMACOES NECESSARIAS"].includes(heading)) body.append(el("h3","",heading.replace("FUNDAMENTACAO","FUNDAMENTAÇÃO").replace("CONFIRMACOES NECESSARIAS","CONFIRMAÇÕES NECESSÁRIAS")));
+    else { const p = el("p"); appendCitedText(p,line.replace(/^[-•]\s+/,"• "),refs); body.append(p); }
+  }
+  container.append(body);
+  const foot = el("p","answer-caveat","Resposta gerada por IA a partir das fontes fornecidas. Confirma a redação e a vigência da legislação nas ligações oficiais antes de tomar uma decisão fiscal.");
+  container.append(foot);
+}
 async function runQuery(question,topic,save=true) {
   const root = $("#resultsArea"); root.hidden = false; root.replaceChildren();
   const loading = el("div","search-loading","A consultar os textos legislativos disponíveis…");
@@ -483,12 +605,25 @@ async function runQuery(question,topic,save=true) {
   const top = el("div","results-top");
   const label = el("span","overline","PESQUISA FUNDAMENTADA");
   const total = articles.length + matches.length;
-  const heading = el("h2","",total ? `${total} referências para analisar` : "Não foi possível fundamentar uma resposta");
+  const heading = el("h2","",aiEndpoint && aiAccessKey ? "A resposta à tua pergunta" : total ? `${total} referências para analisar` : "Não foi possível fundamentar uma resposta");
   top.append(label,heading); root.append(top);
+  let answerContainer = null;
+  if (aiEndpoint && aiAccessKey) {
+    answerContainer = el("section","ai-answer answer-loading");
+    answerContainer.append(el("span","overline","RESPOSTA DO FERNANDO"),el("p","","A analisar os artigos para preparar uma resposta fundamentada…"));
+    root.append(answerContainer);
+  } else {
+    const invite = el("div","ai-invite");
+    invite.append(el("strong","","Queres uma resposta direta e fundamentada?"),el("p","","A pesquisa documental já está disponível. Para o Fernando redigir a explicação com IA, liga o serviço nas Definições."));
+    const button = el("button","button button-outline button-small","Ligar respostas com IA →"); button.type="button";button.addEventListener("click",() => showView("definicoes"));invite.append(button);
+    root.append(invite);
+  }
   const information = legalIndex.generatedAt ? `Índice da AT recolhido em ${formatDate(legalIndex.generatedAt)} (${legalIndex.articleCount||legalIndex.articles.length} artigos).` : "O índice da AT ainda não contém artigos recolhidos.";
-  root.append(el("p","results-disclaimer",`${information} A ferramenta localiza excertos; não gera pareceres, não valida a vigência em tempo real nem substitui a consulta do Diário da República.`));
+  root.append(el("p","results-disclaimer",`${information} A IA utiliza esta cópia datada; não valida automaticamente a vigência nem substitui a consulta do Diário da República.`));
   if (indexError) root.append(el("p","index-warning",`A pesquisa na AT não foi concluída: ${indexError}`));
   if (legalIndex.reason) root.append(el("p","index-warning",legalIndex.reason));
+
+  if (answerContainer && total) root.append(el("h3","result-evidence-heading",`${total} referências consultadas`));
 
   if (articles.length) {
     const heading = el("div","result-group-heading");
@@ -527,6 +662,20 @@ async function runQuery(question,topic,save=true) {
     block.append(links); root.append(block);
   }
   root.scrollIntoView({behavior:"smooth",block:"start"});
+  if (answerContainer) {
+    const sources = aiRequestSources(articles,matches,legalIndex);
+    if (!sources.length) {
+      answerContainer.replaceChildren(el("strong","","Não há fontes suficientes para gerar uma resposta."),el("p","","Ativa a AT ou adiciona um diploma. Para enviar excertos dos teus documentos à IA, assinala a autorização junto aos anexos."));
+      answerContainer.classList.remove("answer-loading");
+    } else {
+      try { renderAIAnswer(await requestAIAnswer(question,topic,sources,legalIndex),answerContainer); }
+      catch (error) {
+        answerContainer.classList.remove("answer-loading");
+        answerContainer.replaceChildren(el("strong","","Não foi possível obter a resposta automática."),el("p","",error.message||"Erro desconhecido no serviço de IA."),el("p","","Os artigos encontrados continuam disponíveis abaixo, para consulta."));
+        toast(error.message||"Erro na IA.",true);
+      }
+    }
+  }
 }
 
 async function renderHistory() {
@@ -539,7 +688,7 @@ async function renderHistory() {
       const left = el("div","history-details");
       left.append(pill(entry.topic || "Geral","pill-topic"),el("strong","",entry.question),el("small","",`${formatDate(entry.createdAt)} · ${entry.matchCount || 0} excertos${entry.attachmentNames?.length ? ` · ${entry.attachmentNames.length} anexo(s) não guardado(s)` : ""}`));
       const button = el("button","button button-outline button-small","Retomar ↗"); button.type = "button";
-      button.addEventListener("click",async () => { showView("consulta"); $("#question").value = entry.question; $("#topic").value = entry.topic || "Geral"; queryAttachments = []; renderAttachments(); try { await runQuery(entry.question,entry.topic||"Geral",false); } catch { toast("Erro ao repetir a pesquisa.",true); } });
+      button.addEventListener("click",async () => { showView("consulta"); $("#question").value = entry.question; $("#topic").value = entry.topic || "Geral"; $("#sendDocumentsToAI").checked=false; queryAttachments = []; renderAttachments(); try { await runQuery(entry.question,entry.topic||"Geral",false); } catch { toast("Erro ao repetir a pesquisa.",true); } });
       row.append(left,button); root.append(row);
     }
   } catch { root.append(emptyState("Não foi possível abrir o histórico","Tenta atualizar a aplicação.")); }
@@ -594,7 +743,10 @@ async function restoreBackup(file) {
     tx.onabort = () => reject(tx.error);
   });
   catalogSettings = {id:"catalog",disabled:[],custom:[]};
+  try { sessionStorage.removeItem("fernando-ai-session-key"); } catch {}
+  aiAccessKey = "";
   await loadCatalog();
+  await loadAISettings();
   await updateCounts(); renderMiniSources(); renderCatalog(); renderDocumentSourceOptions(); renderDocuments(); renderHistory();
   toast("Backup restaurado com sucesso.");
 }
@@ -622,6 +774,24 @@ function openDocumentDialog() { $("#documentForm").reset(); $("#documentDate").v
 
 function bindHandlers() {
   $$('[data-view]').forEach(button => button.addEventListener("click",() => showView(button.dataset.view)));
+  $("#aiSettingsForm").addEventListener("submit",async event => {
+    event.preventDefault();
+    try { await persistAISettings(); toast("Ligação guardada neste dispositivo."); }
+    catch (error) { $("#aiConnectionStatus").textContent = error.message || "Não foi possível guardar a ligação."; toast(error.message,true); }
+  });
+  $("#aiTestButton").addEventListener("click",async () => {
+    const button = $("#aiTestButton"); button.disabled = true;
+    $("#aiConnectionStatus").textContent = "A verificar o serviço…";
+    try { $("#aiConnectionStatus").textContent = await testAIConnection(); }
+    catch (error) { $("#aiConnectionStatus").textContent = error.message || "Erro ao verificar a ligação."; }
+    finally { button.disabled = false; }
+  });
+  $("#aiDisconnectButton").addEventListener("click",async () => {
+    aiEndpoint = ""; aiAccessKey = "";
+    try { sessionStorage.removeItem("fernando-ai-session-key"); } catch {}
+    await mutate("settings","delete","ai");
+    showAISettings(); toast("IA desligada. A pesquisa local continua disponível.");
+  });
   $$('[data-example]').forEach(button => button.addEventListener("click",() => { $("#question").value=button.dataset.example; $("#topic").value=button.dataset.topic; $("#question").focus(); }));
   $("#queryForm").addEventListener("submit",async e => {
     e.preventDefault();
@@ -630,7 +800,7 @@ function bindHandlers() {
     const button = $("#querySubmit"); button.disabled=true;
     try { await runQuery(question,$("#topic").value); }
     catch { toast("Não foi possível concluir a pesquisa.",true); }
-    finally { button.disabled=false; }
+    finally { button.disabled=false; $("#sendDocumentsToAI").checked=false; }
   });
   $("#attachFilesButton").addEventListener("click",() => $("#queryFiles").click());
   $("#queryFiles").addEventListener("change",e => { addQueryFiles(e.target.files); e.target.value=""; });
@@ -694,6 +864,7 @@ async function start() {
   try {
     db = await openDatabase();
     await loadCatalog();
+    await loadAISettings();
     bindHandlers();
     renderMiniSources(); renderDocumentSourceOptions();
     await updateCounts();
