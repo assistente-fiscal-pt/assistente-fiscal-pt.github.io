@@ -441,6 +441,18 @@ function legalMatches(question,topic,legalIndex) {
   // Evitar apresentar vários fragmentos do mesmo artigo.
   return matches.sort((a,b) => b.score-a.score).slice(0,7);
 }
+function legalArticleLabel(article) {
+  const lines = (article.text || "").split(/\n/).map(line => line.trim()).filter(Boolean);
+  const index = lines.findIndex(line => /^artigo\s+\d+/i.test(line));
+  if (index >= 0) {
+    const number = lines[index].slice(0,95);
+    const heading = lines[index+1] || "";
+    const usable = heading.length < 105 && !/^(?:\d+|[a-z]\)|reda[cç][aã]o|nota\s*:)/i.test(heading);
+    return `${article.code} · ${number}${usable ? " — " + heading : ""}`;
+  }
+  const number = article.url.match(/(?:iva|irc|irs|bf|lgt)[-_]?(\d+[a-z]?)(?:[_.-]|\.aspx)/i)?.[1];
+  return `${article.code}${number ? ` · Artigo ${number}` : " · Disposição legal"}`;
+}
 async function runQuery(question,topic,save=true) {
   const root = $("#resultsArea"); root.hidden = false; root.replaceChildren();
   const loading = el("div","search-loading","A consultar os textos legislativos disponíveis…");
@@ -477,7 +489,7 @@ async function runQuery(question,topic,save=true) {
     for (const match of articles) {
       const item = el("article","result-card official-result");
       const topRow = el("div","result-card-top");
-      topRow.append(pill(match.article.code,"pill-result"),el("strong","",match.article.title || `Artigo ${match.article.code}`));
+      topRow.append(pill(match.article.code,"pill-result"),el("strong","",legalArticleLabel(match.article)));
       item.append(topRow,el("p","",match.text));
       const bottom = el("div","result-card-bottom");
       bottom.append(el("small","",`Texto consultado em ${formatDate(legalIndex.generatedAt)} · verificar vigência`),link(match.article.url,"Ler artigo na AT ↗"));
