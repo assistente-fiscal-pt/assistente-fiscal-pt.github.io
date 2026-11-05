@@ -464,12 +464,14 @@ function legalMatches(question,topic,legalIndex) {
   const original = keywords(question);
   if (!terms.length) return [];
   const search = normal(question);
-  const area = topic === "Geral" ? (/\biva\b/.test(search) ? "IVA" : /\birc\b/.test(search) ? "IRC" : /\birs\b/.test(search) ? "IRS" : topic) : topic;
+  const area = topic === "Geral" ? (/\b(?:iva|civa)\b/.test(search) ? "IVA" : /\b(?:irc|circ)\b/.test(search) ? "IRC" : /\b(?:irs|cirs)\b/.test(search) ? "IRS" : topic) : topic;
   const asksAboutDonations = /donativ|mecenat/.test(search);
   const asksAboutMajoration = /majorar|majorac|majorad/.test(search);
+  const requestedArticle = search.match(/\bart(?:igo)?\.?\s+(\d{1,3}[a-z]?)\s*(?:[.º°]|\b)/)?.[1] || "";
   const matches = [];
   for (const article of legalIndex.articles) {
-    if (area === "IVA" && article.code !== "CIVA") continue;
+    // As normas gerais (LGT) e benefícios fiscais (EBF) podem complementar os códigos principais.
+    if (area === "IVA" && !["CIVA","LGT","EBF"].includes(article.code)) continue;
     if (area === "IRC" && !["CIRC","EBF","LGT"].includes(article.code)) continue;
     if (area === "IRS" && !["CIRS","EBF","LGT"].includes(article.code)) continue;
     const content = article.text;
@@ -480,9 +482,13 @@ function legalMatches(question,topic,legalIndex) {
     if (asksAboutDonations && asksAboutMajoration && article.code !== "EBF" && !/majorad|majorac/.test(normText)) continue;
     const termHits = original.filter(t => normText.includes(t)).length;
     const expandedHits = terms.filter(t => normText.includes(t)).length;
-    const articleNumber = (article.url.match(/(?:iva|irc|irs|bf|lgt)[-_]?(\d+)(?:[_.-]|\.aspx)/i) || [])[1];
+    const articleNumber = (article.url.match(/(?:iva|irc|irs|bf|lgt)[-_]?(\d+[a-z]?)(?:[_.-]|\.aspx)/i) || [])[1] || "";
     let priority = expandedHits * 2 + termHits * 5;
     priority += terms.filter(t => normal(legalArticleLabel(article)).includes(t)).length * 10;
+    if (requestedArticle && articleNumber === requestedArticle) {
+      priority += 70;
+      if ((area === "IVA" && article.code === "CIVA") || (area === "IRC" && article.code === "CIRC") || (area === "IRS" && article.code === "CIRS")) priority += 30;
+    }
     if (search.includes("iva") && article.code === "CIVA") priority += 4;
     if (/construc|empreitad|obra/.test(search) && article.code === "CIVA" && articleNumber === "2") priority += 14;
     if (/taxa|percentagem|quanto/.test(search) && article.code === "CIVA" && articleNumber === "18") priority += 20;
@@ -507,7 +513,7 @@ function legalMatches(question,topic,legalIndex) {
     matches.push({article,score:priority+best.score,text:best.text.slice(0,860)});
   }
   // Evitar apresentar vários fragmentos do mesmo artigo.
-  return matches.sort((a,b) => b.score-a.score).filter((item,index,all) => item.score >= Math.max(14,all[0].score * .68)).slice(0,5);
+  return matches.sort((a,b) => b.score-a.score).filter((item,index,all) => item.score >= Math.max(14,all[0].score * .58)).slice(0,6);
 }
 function legalArticleLabel(article) {
   const lines = (article.text || "").split(/\n/).map(line => line.trim()).filter(Boolean);
