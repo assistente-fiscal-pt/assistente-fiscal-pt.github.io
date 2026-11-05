@@ -143,11 +143,29 @@ ${refs}`;
 }
 
 function responseText(value) {
-  if (typeof value === "string") return value;
-  if (typeof value?.response === "string") return value.response;
-  if (typeof value?.output_text === "string") return value.output_text;
-  if (typeof value?.result?.response === "string") return value.result.response;
-  if (Array.isArray(value?.output)) return value.output.flatMap(item => item.content || []).filter(p => p.type === "output_text").map(p => p.text).join("\n");
+  const textParts = content => {
+    if (typeof content === "string") return [content];
+    if (!Array.isArray(content)) return [];
+    return content.flatMap(part =>
+      typeof part === "string" ? [part] :
+      (part?.type === "text" || part?.type === "output_text") && typeof part.text === "string" ? [part.text] : []
+    );
+  };
+  for (const result of [value, value?.result]) {
+    if (typeof result === "string") return result;
+    if (typeof result?.response === "string") return result.response;
+    if (typeof result?.output_text === "string") return result.output_text;
+    // O modelo GPT-OSS pode devolver o formato Chat Completions quando recebe `messages`.
+    if (Array.isArray(result?.choices)) {
+      const answer = result.choices.flatMap(choice => textParts(choice?.message?.content ?? choice?.text)).join("\n").trim();
+      if (answer) return answer;
+    }
+    // A API Responses devolve mensagens em `output`, separadas dos blocos de raciocínio.
+    if (Array.isArray(result?.output)) {
+      const answer = result.output.filter(item => item?.type === "message").flatMap(item => textParts(item.content)).join("\n").trim();
+      if (answer) return answer;
+    }
+  }
   return "";
 }
 
@@ -159,7 +177,7 @@ export default {
 
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({ service: "Fernando", ready: !!env.AI && !!env.FERNANDO_ACCESS_KEY }, 200, origin);
+      return json({ service: "Fernando", ready: !!env.AI && typeof env.FERNANDO_ACCESS_KEY === "string" && env.FERNANDO_ACCESS_KEY.length >= 16 }, 200, origin);
     }
     if (request.method !== "POST" || url.pathname !== "/answer") return json({ error: "Rota não encontrada." }, 404, origin);
     if (!env.AI || !env.FERNANDO_ACCESS_KEY || env.FERNANDO_ACCESS_KEY.length < 16) {
