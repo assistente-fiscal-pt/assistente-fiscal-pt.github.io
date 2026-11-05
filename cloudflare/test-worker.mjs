@@ -115,7 +115,7 @@ test("bloqueia respostas com referências inventadas",async () => {
   const result = await response.json();
   assert.equal(response.status,422);
   assert.equal(result.answer,undefined);
-  assert.match(result.error,/dupla verificação/);
+  assert.match(result.error,/Código: R2/);
 });
 
 test("bloqueia afirmações sem qualquer referência",async () => {
@@ -123,6 +123,7 @@ test("bloqueia afirmações sem qualquer referência",async () => {
   const response = await worker.fetch(request("/answer"),fake.config);
   assert.equal(response.status,422);
   assert.equal(fake.calls,1);
+  assert.match((await response.json()).error,/Código: R1/);
 });
 
 test("rejeita a conclusão errada do teste real de construção civil",async () => {
@@ -138,19 +139,31 @@ test("rejeita a conclusão errada do teste real de construção civil",async () 
   assert.equal(response.status,422);
   assert.equal(result.answer,undefined);
   assert.equal(fake.calls,2);
+  assert.match(result.error,/Código: R4/);
 });
 
 test("não confia numa aprovação sem citação literal verificável",async () => {
   const fake = environment(undefined,JSON.stringify({approved:true,evidence:[{source:"F1",quote:"Texto de apoio suficientemente longo mas que não aparece em nenhuma passagem da fonte."}]}));
   const response = await worker.fetch(request("/answer"),fake.config);
   assert.equal(response.status,422);
-  assert.equal((await response.json()).answer,undefined);
+  const result = await response.json();
+  assert.equal(result.answer,undefined);
+  assert.match(result.error,/Código: R5/);
 });
 
 test("bloqueia respostas quando a auditoria devolve JSON inválido",async () => {
   const fake = environment(undefined,"Não consegui verificar a resposta.");
   const response = await worker.fetch(request("/answer"),fake.config);
   assert.equal(response.status,422);
+  assert.match((await response.json()).error,/Código: R3/);
+});
+
+test("não rejeita uma transcrição correta apenas por diferença de pontuação",async () => {
+  const fake = environment(undefined,JSON.stringify({approved:true,evidence:[{
+    source:"F1",quote:"Artigo 41º - Prazo de entrega da declaração periódica; O sujeito passivo apresenta a declaração nos termos definidos"
+  }]}));
+  const response = await worker.fetch(request("/answer"),fake.config);
+  assert.equal(response.status,200);
 });
 
 test("não aceita uma origem oficial falsificada",async () => {
