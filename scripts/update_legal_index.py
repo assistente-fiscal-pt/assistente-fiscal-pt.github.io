@@ -64,7 +64,9 @@ def discover(code: str, path: str) -> list[str]:
 
 
 def article_text(soup: BeautifulSoup) -> tuple[str, str]:
-    for element in soup.select("script,style,noscript,nav,footer,header,form,aside,.ms-core-navigation,.ms-srch-sb"): element.decompose()
+    # SharePoint envolve a página inteira num <form id="aspnetForm">.
+    # Remover esse elemento apagaria precisamente o artigo que procuramos.
+    for element in soup.select("script,style,noscript,nav,footer,header,aside,.ms-core-navigation,.ms-srch-sb"): element.decompose()
     title = ""
     for selector in ("h1", "h2", "title"):
         node = soup.select_one(selector)
@@ -110,19 +112,25 @@ def main() -> None:
         except requests.RequestException as exc:
             print(f"Falha a descobrir {code}: {exc}")
             urls = [url for url, item in prior.items() if item.get("code") == code]
-        for url in urls:
+        successes_in_code = 0
+        for position, url in enumerate(urls, start=1):
             try:
                 soup = get_html(url)
                 title, content = article_text(soup)
                 if len(content) < 180 or "artigo" not in (title + " " + content[:600]).lower():
                     raise ValueError("conteúdo legislativo não identificado")
                 new_articles.append({"code": code, "title": title, "url": url, "text": content, "hash": hashlib.sha256(content.encode()).hexdigest()[:16]})
+                successes_in_code += 1
             except (requests.RequestException, ValueError) as exc:
                 failed.append(url)
                 if url in prior:
                     new_articles.append(prior[url])
                 print(f"Aviso ao ler {url}: {exc}")
             time.sleep(0.35)
+            if position == 10 and not successes_in_code:
+                raise RuntimeError(f"Não foi possível ler os primeiros 10 artigos de {code}; verificar estrutura do portal antes de continuar.")
+            if position % 40 == 0:
+                print(f"{code}: {position}/{len(urls)} páginas verificadas; {successes_in_code} artigos aceites", flush=True)
     if not new_articles:
         raise RuntimeError("Nenhum texto legal recolhido. Índice anterior preservado.")
     # Não publicar atualização parcial se houve quebra significativa da fonte.
