@@ -36,17 +36,17 @@ O ficheiro `data/legal-index.json` é atualizado pelo workflow `.github/workflow
 
 ## Ativar respostas com IA (sem instalar Node.js)
 
-O GitHub Pages mantém a app. Para gerar respostas é necessário um serviço servidor para chamar o modelo de linguagem. Este projeto usa um **Cloudflare Worker** separado que corre `@cf/openai/gpt-oss-20b` através de um binding Workers AI.
+O GitHub Pages mantém a app. Para gerar respostas é necessário um serviço servidor para chamar o modelo de linguagem. Este projeto usa um **Cloudflare Worker** separado que corre `@cf/openai/gpt-oss-120b` através de um binding Workers AI, com análise mais aprofundada e exigência explícita de fundamentação.
 
 1. Entra em [Cloudflare](https://dash.cloudflare.com/) e escolhe a modalidade **Free**. Não é necessário comprar um domínio ou alterar o domínio GitHub da PWA.
 2. Em **Workers & Pages**, cria um **Worker** simples com o nome `fernando-ia`, com endereço `*.workers.dev`.
 3. No Worker, abre **Edit Code**. Substitui o código inicial pelo conteúdo integral de [`cloudflare/fernando-worker.js`](./cloudflare/fernando-worker.js) e clica em **Deploy**.
 4. Abre **Settings → Bindings → Add binding** (a posição varia consoante a interface). Seleciona **Workers AI** e atribui-lhe o nome exato `AI`. Guarda a configuração.
-5. Em **Settings → Variables and Secrets**, adiciona uma variável do tipo **Secret**, chamada `FERNANDO_ACCESS_KEY`. Define uma frase-passe aleatória longa com **pelo menos 16 caracteres**, preferencialmente 32 ou mais. Nunca a guardes num ficheiro público nem a partilhes por chat. Guarda e volta a publicar, se o painel solicitar.
+5. Em **Settings → Variables and Secrets**, adiciona uma variável do tipo **Secret**, chamada `FERNANDO_ACCESS_KEY`. Define uma frase-passe exclusiva com **pelo menos 16 caracteres**. Nunca a guardes num ficheiro público nem a partilhes por chat. Se a alteração criar uma versão que não fique ativa, abre **Deployments → ⋯ → Promote version** para a colocar em produção.
 6. Na aplicação Fernando, abre **Definições → Ligar o Fernando à IA**. Introduz o endereço `https://...workers.dev` e **a mesma frase-passe**. Escolhe **Guardar ligação** e **Testar serviço**.
 7. Volta a **Perguntar ao Fernando**: o botão passa a **Obter resposta fundamentada**. Verifica se surgem a resposta, a fundamentação e referências clicáveis. Para permitir análise de ficheiros próprios, é necessário marcar a autorização na própria pergunta.
 
-Não são necessárias ferramentas de programação no computador. O Worker é chamado apenas pela PWA publicada em `https://assistente-fiscal-pt.github.io` e exige a frase-passe para utilizar a IA. Se consultares diretamente o endereço do Worker, a resposta `403` é esperada: o serviço só aceita pedidos com a origem da aplicação. O endpoint `/health` apenas confirma a existência do binding e do Secret; só uma pergunta real valida a frase-passe e o modelo.
+Não são necessárias ferramentas de programação no computador. O Worker é chamado apenas pela PWA publicada em `https://assistente-fiscal-pt.github.io` e exige a frase-passe para utilizar a IA. Se consultares diretamente o endereço do Worker, a resposta `403` é esperada: o serviço só aceita pedidos com a origem da aplicação. O endpoint `/health` confirma a presença do binding e de um Secret com comprimento mínimo; só uma pergunta real valida a frase-passe e o modelo.
 
 ### Plano gratuito e privacidade
 
@@ -54,4 +54,4 @@ Cloudflare Workers AI dispõe, segundo a documentação atual, de **10.000 Neuro
 
 Não coloques dados fiscais de clientes ou documentos confidenciais no repositório (é público). O Worker não guarda os pedidos numa base de dados, mas a Cloudflare recebe a pergunta e os excertos autorizados para processar a inferência. Por defeito, os documentos pessoais não são enviados. A Cloudflare declara que não utiliza o conteúdo dos clientes no Workers AI para treinar os modelos; confirma a [política de utilização de dados](https://developers.cloudflare.com/workers-ai/platform/data-usage/) antes de usar dados profissionais protegidos.
 
-Teste local de validações do Worker: `node --test cloudflare/test-worker.mjs` (apenas para quem desenvolve, não necessário para utilização da app).
+Testes locais das validações e da seleção legislativa: `node --test cloudflare/test-worker.mjs scripts/test-retrieval.mjs` (apenas para quem desenvolve, não necessário para utilização da app).
