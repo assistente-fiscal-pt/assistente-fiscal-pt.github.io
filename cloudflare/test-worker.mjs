@@ -18,7 +18,7 @@ function request(path, method = "POST", body = sample, overrides = {}) {
 function environment(answer = "RESPOSTA DIRETA\nA declaração segue o prazo constante da lei. [F1]\nFUNDAMENTAÇÃO\nO artigo 41.º estabelece regras. [F1]\nCONFIRMAÇÕES NECESSÁRIAS\nVerificar a agenda fiscal atual.") {
   let calls = 0;
   return {
-    config:{AI:{run:async(model,params)=>{calls++; assert.equal(model,"@cf/openai/gpt-oss-20b"); assert.equal(params.messages.length,2); return {response:answer};}},FERNANDO_ACCESS_KEY:secret},
+    config:{AI:{run:async(model,params)=>{calls++; assert.equal(model,"@cf/openai/gpt-oss-120b"); assert.equal(params.messages.length,2); return {response:answer};}},FERNANDO_ACCESS_KEY:secret},
     get calls(){return calls;}
   };
 }
