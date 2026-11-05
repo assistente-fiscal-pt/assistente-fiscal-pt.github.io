@@ -528,20 +528,22 @@ function legalArticleLabel(article) {
   return `${article.code}${number ? ` · Artigo ${number}` : " · Disposição legal"}`;
 }
 function aiRequestSources(articles,matches,legalIndex) {
-  const sources = articles.map(match => ({
+  // Enviar menos artigos, mas conservar a estrutura e as alíneas da norma completa.
+  // Um excerto isolado pode inverter o sentido de uma exceção legal.
+  const sources = articles.slice(0,4).map(match => ({
     type:"official",title:legalArticleLabel(match.article),code:match.article.code,url:match.article.url,
-    text:`Excerto mais pertinente:\n${match.text}\n\nContexto do artigo:\n${match.article.text.slice(0,2050)}`.slice(0,3200)
+    text:`Texto do artigo (cópia datada):\n${match.article.text.slice(0,12800)}\n\nPassagem selecionada pela pesquisa:\n${match.text}`.slice(0,14000)
   }));
   if ($("#sendDocumentsToAI")?.checked) {
-    for (const item of matches.slice(0,Math.max(0,8-sources.length))) {
+    for (const item of matches.slice(0,Math.max(0,6-sources.length))) {
       sources.push({type:"personal",title:item.document.title,text:`${item.text}\n\n${item.document.text.slice(0,2100)}`.slice(0,3100),url:null});
     }
   }
-  return sources.slice(0,8);
+  return sources.slice(0,6);
 }
 async function requestAIAnswer(question,topic,sources,legalIndex) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 65000);
+  const timeout = setTimeout(() => controller.abort(), 115000);
   try {
     const response = await fetch(`${aiEndpoint}/answer`,{
       method:"POST",mode:"cors",cache:"no-store",signal:controller.signal,
@@ -572,7 +574,7 @@ function appendCitedText(container,line,sourceMap) {
 function renderAIAnswer(result,container) {
   container.replaceChildren(); container.classList.remove("answer-loading");
   const meta = el("div","answer-meta");
-  meta.append(el("span","answer-avatar","f."),el("span","overline","RESPOSTA DO FERNANDO"),pill(result.grounded ? "Com referências" : "Requer verificação",result.grounded ? "pill-official" : "pill-muted"));
+  meta.append(el("span","answer-avatar","f."),el("span","overline","RESPOSTA DO FERNANDO"),pill(result.verification === "double-ai-review" ? "Revisão por IA" : result.grounded ? "Com referências" : "Requer verificação",result.grounded ? "pill-official" : "pill-muted"));
   container.append(meta);
   if (!result.grounded) container.append(el("p","index-warning","A resposta não contém referências válidas suficientes. Consulta os excertos e confirma todas as afirmações antes de a utilizar."));
   if (result.deadlineNeedsVerification) container.append(el("p","index-warning","Prazo do mês em curso: o Fernando não consultou uma Agenda Fiscal oficial atualizada. Confirma a data-limite e eventuais prorrogações na AT antes de submeter a declaração."));
@@ -585,7 +587,7 @@ function renderAIAnswer(result,container) {
     else { const p = el("p"); appendCitedText(p,line.replace(/^[-•]\s+/,"• "),refs); body.append(p); }
   }
   container.append(body);
-  const foot = el("p","answer-caveat","Resposta gerada por IA a partir das fontes fornecidas. Confirma a redação e a vigência da legislação nas ligações oficiais antes de tomar uma decisão fiscal.");
+  const foot = el("p","answer-caveat","Resposta gerada e, quando indicado, revista por IA com base nas fontes fornecidas. Esta revisão também pode falhar: não equivale a validação jurídica independente. Confirma a redação, a vigência e as condições nas fontes oficiais antes de tomar uma decisão fiscal.");
   container.append(foot);
 }
 async function runQuery(question,topic,save=true) {
@@ -629,7 +631,7 @@ async function runQuery(question,topic,save=true) {
   if (indexError) root.append(el("p","index-warning",`A pesquisa na AT não foi concluída: ${indexError}`));
   if (legalIndex.reason) root.append(el("p","index-warning",legalIndex.reason));
 
-  if (answerContainer && total) root.append(el("h3","result-evidence-heading",`${total} referências consultadas`));
+  if (answerContainer && total) root.append(el("h3","result-evidence-heading",`${total} referências encontradas`));
 
   if (articles.length) {
     const heading = el("div","result-group-heading");
