@@ -22,15 +22,19 @@ function request(path, method = "POST", body = sample, overrides = {}) {
 }
 function environment(answer = "RESPOSTA DIRETA\nA declaração segue o prazo constante da lei. [F1]\nFUNDAMENTAÇÃO\nO artigo 41.º estabelece regras. [F1]\nCONFIRMAÇÕES NECESSÁRIAS\nVerificar a agenda fiscal atual.",review=approvedReview) {
   let calls = 0;
+  const paramsSent = [];
+  const sequence = Array.isArray(review) ? [answer,...review] : [answer,review];
   return {
     config:{AI:{run:async(model,params)=>{
       calls++;
+      paramsSent.push(params);
       assert.equal(model,"@cf/openai/gpt-oss-120b");
       assert.equal(params.messages.length,2);
-      const value = calls === 1 ? answer : review;
+      const value = sequence[Math.min(calls-1,sequence.length-1)];
       return typeof value === "string" ? {response:value} : value;
     }},FERNANDO_ACCESS_KEY:secret},
-    get calls(){return calls;}
+    get calls(){return calls;},
+    get paramsSent(){return paramsSent;}
   };
 }
 
@@ -133,13 +137,34 @@ test("rejeita a conclusão errada do teste real de construção civil",async () 
     sources:[{type:"official",title:"CIVA · Artigo 2.º",code:"CIVA",url:"https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/civa_rep/Pages/iva2.aspx",text:"j) As pessoas singulares ou coletivas referidas na alínea a) que disponham de sede, estabelecimento estável ou domicílio em território nacional e que pratiquem operações que confiram o direito à dedução total ou parcial do imposto, quando sejam adquirentes de serviços de construção civil, incluindo a remodelação, reparação, manutenção, conservação e demolição de bens imóveis, em regime de empreitada ou subempreitada."}]
   };
   const wrong = "Cabe ao prestador liquidar IVA, pois a autoliquidação só se aplica a prestadores não residentes. [F1]";
-  const fake = environment(wrong,JSON.stringify({approved:false,reason:"Ignora a alínea j) que atribui a liquidação ao adquirente.",evidence:[]}));
+  const reject = JSON.stringify({approved:false,reason:"Ignora a alínea j) que atribui a liquidação ao adquirente.",evidence:[]});
+  const fake = environment(wrong,[reject,wrong,reject]);
   const response = await worker.fetch(request("/answer","POST",construction),fake.config);
   const result = await response.json();
   assert.equal(response.status,422);
   assert.equal(result.answer,undefined);
-  assert.equal(fake.calls,2);
+  assert.equal(fake.calls,4);
   assert.match(result.error,/Código: R4/);
+});
+
+test("reformula uma resposta jurídica recusada e só apresenta a correção após segunda auditoria",async () => {
+  const body = {
+    question:"Quem autoliquida o IVA na construção civil em território nacional?",
+    topic:"IVA",
+    sources:[{type:"official",title:"CIVA · Artigo 2.º",code:"CIVA",url:"https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/civa_rep/Pages/iva2.aspx",text:"j) São sujeitos passivos os adquirentes de serviços de construção civil, incluindo remodelação, reparação, manutenção, conservação e demolição, que tenham direito à dedução total ou parcial do imposto e as demais condições previstas nesta alínea."}]
+  };
+  const wrong = "O prestador liquida o imposto em todos os casos. [F1]";
+  const correction = "RESPOSTA DIRETA\nO adquirente dos serviços autoliquida o IVA se cumprir as condições da alínea j) do artigo 2.º. [F1]\nFUNDAMENTAÇÃO\nA regra abrange serviços de construção civil. [F1]\nCONFIRMAÇÕES NECESSÁRIAS\nVerificar o âmbito exato dos serviços e vigência da norma.";
+  const reject = JSON.stringify({approved:false,reason:"A alínea j) indica expressamente o adquirente como sujeito passivo.",evidence:[]});
+  const approval = JSON.stringify({approved:true,evidence:[{source:"F1",quote:body.sources[0].text} ]});
+  const fake = environment(wrong,[reject,correction,approval]);
+  const response = await worker.fetch(request("/answer","POST",body),fake.config);
+  const result = await response.json();
+  assert.equal(response.status,200);
+  assert.equal(result.answer,correction);
+  assert.equal(result.repairAttempted,true);
+  assert.equal(fake.calls,4);
+  assert.match(fake.paramsSent[2].messages[1].content,/indica expressamente o adquirente/);
 });
 
 test("não confia numa aprovação sem citação literal verificável",async () => {
