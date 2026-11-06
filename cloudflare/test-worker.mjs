@@ -31,6 +31,7 @@ function environment(answer = "RESPOSTA DIRETA\nA declaração segue o prazo con
       assert.equal(model,"@cf/openai/gpt-oss-120b");
       assert.equal(params.messages.length,2);
       const value = sequence[Math.min(calls-1,sequence.length-1)];
+      if (value instanceof Error) throw value;
       return typeof value === "string" ? {response:value} : value;
     }},FERNANDO_ACCESS_KEY:secret},
     get calls(){return calls;},
@@ -266,6 +267,34 @@ test("não envia perguntas sem fontes para o modelo",async () => {
 test("trata indisponibilidade ou limite do modelo",async () => {
   const config = {AI:{run:async()=>{throw new Error("quota exceeded");}},FERNANDO_ACCESS_KEY:secret};
   const response = await worker.fetch(request("/answer"),config);
+  assert.equal(response.status,429);
+  assert.match((await response.json()).error,/Código: Q1/);
+});
+
+test("distingue esgotamento do gratuito de capacidade temporária sem expor detalhes do fornecedor",async () => {
+  const cases = [
+    {message:"3036 You have used up your daily free allocation",status:429,code:"Q1"},
+    {message:"3040 Capacity temporarily exceeded",status:503,code:"Q2"},
+    {message:"3006 Request too large",status:413,code:"Q3"},
+    {message:"3007 Request timeout",status:504,code:"Q4"},
+    {message:"429 Rate limit exceeded",status:429,code:"Q5"},
+    {message:"Internal error containing a private customer description",status:503,code:"Q0"}
+  ];
+  for (const item of cases) {
+    const cfg = {AI:{run:async()=>{throw new Error(item.message);}},FERNANDO_ACCESS_KEY:secret};
+    const response = await worker.fetch(request("/answer"),cfg);
+    const result = await response.json();
+    assert.equal(response.status,item.status,item.message);
+    assert.match(result.error,new RegExp(`Código: ${item.code}`));
+    assert.doesNotMatch(result.error,/private customer description/);
+  }
+});
+
+test("identifica em que chamada ao modelo ocorreu a falha",async () => {
+  const failure = new Error("3040 Capacity temporarily exceeded");
+  const fake = environment(undefined,[failure]);
+  const response = await worker.fetch(request("/answer"),fake.config);
   assert.equal(response.status,503);
-  assert.match((await response.json()).error,/limite gratuito/);
+  assert.match((await response.json()).error,/fase: auditoria/);
+  assert.equal(fake.calls,2);
 });
