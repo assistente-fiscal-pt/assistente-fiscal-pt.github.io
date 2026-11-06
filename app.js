@@ -543,7 +543,8 @@ function aiRequestSources(articles,matches,legalIndex) {
 }
 async function requestAIAnswer(question,topic,sources,legalIndex) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 115000);
+  // A correção automática e a segunda auditoria podem exigir quatro inferências.
+  const timeout = setTimeout(() => controller.abort(), 180000);
   try {
     const response = await fetch(`${aiEndpoint}/answer`,{
       method:"POST",mode:"cors",cache:"no-store",signal:controller.signal,
