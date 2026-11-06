@@ -455,7 +455,11 @@ async function loadLegalIndex() {
   const response = await fetch("./data/legal-index.json",{cache:"no-cache"});
   if (!response.ok) throw new Error("Não foi possível obter o índice da AT.");
   const data = await response.json();
-  if (!Array.isArray(data.articles) || !data.articles.every(a => typeof a.text === "string" && typeof a.url === "string" && a.url.startsWith("https://info.portaldasfinancas.gov.pt/"))) throw new Error("O índice recebido é inválido.");
+  const officialUrl = url => typeof url === "string" && (
+    url.startsWith("https://info.portaldasfinancas.gov.pt/") ||
+    /^https:\/\/at\.madeira\.gov\.pt\/ficheiros\/Oficio-Circulado-[\w-]+\.pdf$/.test(url)
+  );
+  if (!Array.isArray(data.articles) || !data.articles.every(a => typeof a.text === "string" && officialUrl(a.url) && (a.code !== "AT-IVA" || a.kind === "orientacao-administrativa"))) throw new Error("O índice recebido é inválido.");
   legalIndexCache = {value:data,fetchedAt:Date.now()};
   return data;
 }
@@ -471,7 +475,7 @@ function legalMatches(question,topic,legalIndex) {
   const matches = [];
   for (const article of legalIndex.articles) {
     // As normas gerais (LGT) e benefícios fiscais (EBF) podem complementar os códigos principais.
-    if (area === "IVA" && !["CIVA","LGT","EBF"].includes(article.code)) continue;
+    if (area === "IVA" && !["CIVA","LGT","EBF","AT-IVA"].includes(article.code)) continue;
     if (area === "IRC" && !["CIRC","EBF","LGT"].includes(article.code)) continue;
     if (area === "IRS" && !["CIRS","EBF","LGT"].includes(article.code)) continue;
     const content = article.text;
@@ -491,6 +495,7 @@ function legalMatches(question,topic,legalIndex) {
     }
     if (search.includes("iva") && article.code === "CIVA") priority += 4;
     if (/construc|empreitad|obra/.test(search) && article.code === "CIVA" && articleNumber === "2") priority += 14;
+    if (/construc|empreitad|obra|autoliquidac|inversao/.test(search) && article.code === "AT-IVA") priority += 34;
     if (/taxa|percentagem|quanto/.test(search) && article.code === "CIVA" && articleNumber === "18") priority += 20;
     if (/declarac|periodic|mensal/.test(search) && article.code === "CIVA" && (articleNumber === "41" || /artigo\s+41\b/.test(normText.slice(0,500)))) priority += 55;
     if (asksAboutDonations && article.code === "EBF") priority += 18;
@@ -516,6 +521,7 @@ function legalMatches(question,topic,legalIndex) {
   return matches.sort((a,b) => b.score-a.score).filter((item,index,all) => item.score >= Math.max(14,all[0].score * .58)).slice(0,6);
 }
 function legalArticleLabel(article) {
+  if (article.kind === "orientacao-administrativa") return `Orientação interpretativa AT · ${article.title}`;
   const lines = (article.text || "").split(/\n/).map(line => line.trim()).filter(Boolean);
   const index = lines.findIndex(line => /^artigo\s+\d+/i.test(line));
   if (index >= 0) {
@@ -532,7 +538,9 @@ function aiRequestSources(articles,matches,legalIndex) {
   // Um excerto isolado pode inverter o sentido de uma exceção legal.
   const sources = articles.slice(0,4).map(match => ({
     type:"official",title:legalArticleLabel(match.article),code:match.article.code,url:match.article.url,
-    text:`Texto do artigo (cópia datada):\n${match.article.text.slice(0,12800)}\n\nPassagem selecionada pela pesquisa:\n${match.text}`.slice(0,14000)
+    text:match.article.kind === "orientacao-administrativa"
+      ? `Orientação administrativa da AT (não substitui a lei; cópia datada). Passagem pertinente:\n${match.text}\n\nTexto da orientação:\n${match.article.text.slice(0,11700)}`.slice(0,14000)
+      : `Texto do artigo (cópia datada):\n${match.article.text.slice(0,12800)}\n\nPassagem selecionada pela pesquisa:\n${match.text}`.slice(0,14000)
   }));
   if ($("#sendDocumentsToAI")?.checked) {
     for (const item of matches.slice(0,Math.max(0,6-sources.length))) {
@@ -627,7 +635,7 @@ async function runQuery(question,topic,save=true) {
     const button = el("button","button button-outline button-small","Ligar respostas com IA →"); button.type="button";button.addEventListener("click",() => showView("definicoes"));invite.append(button);
     root.append(invite);
   }
-  const information = legalIndex.generatedAt ? `Índice da AT recolhido em ${formatDate(legalIndex.generatedAt)} (${legalIndex.articleCount||legalIndex.articles.length} artigos).` : "O índice da AT ainda não contém artigos recolhidos.";
+  const information = legalIndex.generatedAt ? `Índice da AT recolhido em ${formatDate(legalIndex.generatedAt)} (${(legalIndex.articleCount||legalIndex.articles.length) - (legalIndex.guidanceCount||0)} artigos e ${legalIndex.guidanceCount||0} orientações administrativas).` : "O índice da AT ainda não contém artigos recolhidos.";
   root.append(el("p","results-disclaimer",`${information} A IA utiliza esta cópia datada; não valida automaticamente a vigência nem substitui a consulta do Diário da República.`));
   if (indexError) root.append(el("p","index-warning",`A pesquisa na AT não foi concluída: ${indexError}`));
   if (legalIndex.reason) root.append(el("p","index-warning",legalIndex.reason));
@@ -636,14 +644,14 @@ async function runQuery(question,topic,save=true) {
 
   if (articles.length) {
     const heading = el("div","result-group-heading");
-    heading.append(el("h3","","Legislação da Autoridade Tributária"),pill("Origem oficial · cópia datada","pill-official")); root.append(heading);
+    heading.append(el("h3","","Legislação e orientações da Autoridade Tributária"),pill("Origem oficial · cópia datada","pill-official")); root.append(heading);
     for (const match of articles) {
       const item = el("article","result-card official-result");
       const topRow = el("div","result-card-top");
       topRow.append(pill(match.article.code,"pill-result"),el("strong","",legalArticleLabel(match.article)));
       item.append(topRow,el("p","",match.text));
       const bottom = el("div","result-card-bottom");
-      bottom.append(el("small","",`Texto consultado em ${formatDate(legalIndex.generatedAt)} · verificar vigência`),link(match.article.url,"Ler artigo na AT ↗"));
+      bottom.append(el("small","",`Texto consultado em ${formatDate(legalIndex.generatedAt)} · ${match.article.kind === "orientacao-administrativa" ? "orientação não legislativa" : "verificar vigência"}`),link(match.article.url,match.article.kind === "orientacao-administrativa" ? "Ler ofício-circulado ↗" : "Ler artigo na AT ↗"));
       item.append(bottom); root.append(item);
     }
   }
