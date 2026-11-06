@@ -115,19 +115,45 @@ test("sinaliza prazo do mês corrente sem Agenda Fiscal atual",async () => {
 });
 
 test("bloqueia respostas com referências inventadas",async () => {
-  const response = await worker.fetch(request("/answer"),environment("A regra é esta [F9].").config);
+  const fake = environment("A regra é esta [F9].",["A regra continua a ser esta [F9]."]);
+  const response = await worker.fetch(request("/answer"),fake.config);
   const result = await response.json();
   assert.equal(response.status,422);
   assert.equal(result.answer,undefined);
   assert.match(result.error,/Código: R2/);
+  assert.equal(fake.calls,2);
 });
 
 test("bloqueia afirmações sem qualquer referência",async () => {
   const fake = environment("A regra é esta sem referências.");
   const response = await worker.fetch(request("/answer"),fake.config);
   assert.equal(response.status,422);
-  assert.equal(fake.calls,1);
+  assert.equal(fake.calls,2);
   assert.match((await response.json()).error,/Código: R1/);
+});
+
+test("recupera uma resposta R1 com referências reais e auditoria obrigatória",async () => {
+  const bare = "RESPOSTA DIRETA\nO artigo 41.º prevê a entrega de uma declaração periódica.";
+  const corrected = "RESPOSTA DIRETA\nO artigo 41.º prevê a entrega de uma declaração periódica. [F1]\nFUNDAMENTAÇÃO\nA norma indicada regula a declaração periódica. [F1]";
+  const fake = environment(bare,[corrected,approvedReview]);
+  const response = await worker.fetch(request("/answer"),fake.config);
+  const result = await response.json();
+  assert.equal(response.status,200);
+  assert.equal(result.answer,corrected);
+  assert.equal(result.repairAttempted,true);
+  assert.equal(fake.calls,3);
+  assert.match(fake.paramsSent[1].messages[1].content,/nenhuma referência no formato literal/);
+  assert.equal(fake.paramsSent[2].messages[0].content.includes("auditor jurídico-fiscal"),true);
+});
+
+test("recupera uma resposta R2 apenas se a revisão remover citações inventadas",async () => {
+  const wrong = "A declaração periódica é de entrega obrigatória. [F7]";
+  const corrected = "O artigo 41.º regula a entrega da declaração periódica. [F1]";
+  const fake = environment(wrong,[corrected,approvedReview]);
+  const response = await worker.fetch(request("/answer"),fake.config);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).answer,corrected);
+  assert.equal(fake.calls,3);
 });
 
 test("rejeita a conclusão errada do teste real de construção civil",async () => {
