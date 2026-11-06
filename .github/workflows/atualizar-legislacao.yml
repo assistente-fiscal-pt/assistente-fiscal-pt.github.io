@@ -23,6 +23,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # Em atualizações sucessivas, a recolha começa sempre no último main;
+      # não tenta publicar um índice a partir de um commit ultrapassado.
+      - name: Sincronizar com a versão mais recente
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
