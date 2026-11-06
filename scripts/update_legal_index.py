@@ -7,6 +7,7 @@ As páginas continuam a ser da responsabilidade da Autoridade Tributária. O ín
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import time
@@ -16,6 +17,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
 from legal_text import normalize_article_lines
 
 
@@ -29,6 +31,20 @@ CATALOG = {
     "CIRS": "/pt/informacao_fiscal/codigos_tributarios/cirs_rep/Pages/codigo-do-irs-indice.aspx",
     "EBF": "/pt/informacao_fiscal/codigos_tributarios/bf_rep/Pages/estatuto-dos-beneficios-fiscais-indice.aspx",
     "LGT": "/pt/informacao_fiscal/codigos_tributarios/lgt/Pages/lei-geral-tributaria-indice.aspx",
+}
+
+# A orientação administrativa complementa a leitura da lei; não a substitui.
+# Os dois documentos permitem distinguir a inversão já existente em 2007 da
+# ampliação de 2026, que altera apenas parte do âmbito da alínea j).
+GUIDANCE = {
+    "AT-IVA-30101-2007": (
+        "Ofício-circulado n.º 30101/2007 — IVA: serviços de construção civil",
+        "https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/legislacao/instrucoes_administrativas/Documents/IVA-of_circ_30101.pdf",
+    ),
+    "AT-IVA-25117-2026": (
+        "Ofício-circulado n.º 25117/2026 — IVA: inversão em serviços de construção civil",
+        "https://at.madeira.gov.pt/ficheiros/Oficio-Circulado-25117-2026.pdf",
+    ),
 }
 
 session = requests.Session()
@@ -98,6 +114,22 @@ def article_text(soup: BeautifulSoup) -> tuple[str, str]:
     return title[:190], content[:75000]
 
 
+def guidance_text(url: str) -> str:
+    response = session.get(url, timeout=45)
+    response.raise_for_status()
+    if "pdf" not in response.headers.get("content-type", "").lower() and not response.content.startswith(b"%PDF"):
+        raise ValueError("A orientação não devolveu um PDF")
+    reader = PdfReader(io.BytesIO(response.content))
+    if len(reader.pages) > 60:
+        raise ValueError("PDF com páginas a mais")
+    content = "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
+    content = re.sub(r"[ \t]+", " ", content)
+    content = re.sub(r"\n{3,}", "\n\n", content).strip()
+    if len(content) < 800:
+        raise ValueError("O PDF não contém texto pesquisável suficiente")
+    return content[:75000]
+
+
 def main() -> None:
     prior = {}
     previously_fetched_today = False
@@ -144,6 +176,22 @@ def main() -> None:
                 raise RuntimeError(f"Não foi possível ler os primeiros 10 artigos de {code}; verificar estrutura do portal antes de continuar.")
             if position % 40 == 0:
                 print(f"{code}: {position}/{len(urls)} páginas verificadas; {successes_in_code} artigos aceites", flush=True)
+    guidance_count = 0
+    for identifier, (title, url) in GUIDANCE.items():
+        try:
+            content = guidance_text(url)
+            new_articles.append({"code":"AT-IVA", "kind":"orientacao-administrativa", "identifier":identifier,
+                                 "title":title, "url":url, "text":content,
+                                 "hash":hashlib.sha256(content.encode()).hexdigest()[:16]})
+            guidance_count += 1
+            print(f"Orientação AT recolhida: {identifier} ({len(content)} caracteres)")
+        except (requests.RequestException, ValueError, OSError) as exc:
+            if url in prior and len(prior[url].get("text", "")) >= 800:
+                new_articles.append(prior[url]); guidance_count += 1
+                print(f"Orientação AT preservada após falha: {identifier} ({exc})")
+            else:
+                failed.append(url)
+                print(f"AVISO: orientação AT indisponível: {identifier}: {exc}")
     if not new_articles:
         raise RuntimeError("Nenhum texto legal recolhido. Índice anterior preservado.")
     # Não publicar atualização parcial se houve quebra significativa da fonte.
@@ -151,10 +199,12 @@ def main() -> None:
         raise RuntimeError("Recolha demasiado incompleta. Índice anterior preservado.")
     result = {
         "extractorVersion": EXTRACTOR_VERSION,
+        "guidanceVersion": 1,
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "origin": ROOT,
         "notice": "Cópia de pesquisa não autenticada. Confirmar redação e vigência no Portal das Finanças e no Diário da República.",
         "articleCount": len(new_articles),
+        "guidanceCount": guidance_count,
         "failedCount": len(failed),
         "articles": new_articles,
     }
