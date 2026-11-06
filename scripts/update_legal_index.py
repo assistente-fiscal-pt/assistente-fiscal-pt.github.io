@@ -16,10 +16,13 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from legal_text import normalize_article_lines
 
 
 ROOT = "https://info.portaldasfinancas.gov.pt"
 OUT = Path(__file__).resolve().parents[1] / "data" / "legal-index.json"
+# A versão 2 preserva alíneas curtas como «j)», essenciais para interpretar a lei.
+EXTRACTOR_VERSION = 2
 CATALOG = {
     "CIVA": "/pt/informacao_fiscal/codigos_tributarios/civa_rep/pages/codigo-do-iva-indice.aspx",
     "CIRC": "/pt/informacao_fiscal/codigos_tributarios/CIRC_2R/Pages/circ-codigo-do-irc-indice.aspx",
@@ -91,9 +94,7 @@ def article_text(soup: BeautifulSoup) -> tuple[str, str]:
         body = soup.body or soup
         candidates = [body.get_text("\n", strip=True)]
     content = max(candidates, key=len)
-    lines = [re.sub(r"\s+", " ", line).strip() for line in content.splitlines()]
-    lines = [line for line in lines if len(line) >= 3]
-    content = "\n".join(lines)
+    content = normalize_article_lines(content)
     return title[:190], content[:75000]
 
 
@@ -104,7 +105,10 @@ def main() -> None:
         try:
             old_index = json.loads(OUT.read_text(encoding="utf-8"))
             prior = {article["url"]: article for article in old_index.get("articles", [])}
-            previously_fetched_today = str(old_index.get("generatedAt", "")).startswith(datetime.now(timezone.utc).date().isoformat())
+            previously_fetched_today = (
+                str(old_index.get("generatedAt", "")).startswith(datetime.now(timezone.utc).date().isoformat())
+                and old_index.get("extractorVersion") == EXTRACTOR_VERSION
+            )
         except (OSError, ValueError, KeyError):
             pass
     new_articles = []
@@ -146,6 +150,7 @@ def main() -> None:
     if prior and len(new_articles) < max(20, len(prior) * .6):
         raise RuntimeError("Recolha demasiado incompleta. Índice anterior preservado.")
     result = {
+        "extractorVersion": EXTRACTOR_VERSION,
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "origin": ROOT,
         "notice": "Cópia de pesquisa não autenticada. Confirmar redação e vigência no Portal das Finanças e no Diário da República.",
