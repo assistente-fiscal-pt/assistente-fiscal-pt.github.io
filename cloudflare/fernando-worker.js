@@ -262,6 +262,25 @@ function unverified(code, origin) {
   return json({ error:`${UNVERIFIED_ERROR} (Código: ${code})` }, 422, origin);
 }
 
+function aiFailure(error, phase, origin) {
+  // Só comunicar a categoria conhecida; nunca enviar mensagens brutas do
+  // fornecedor, que podem conter excertos da pergunta ou dos documentos.
+  const details = [error?.code,error?.status,error?.message,error?.cause?.code,error?.cause?.message].filter(v => v !== undefined && v !== null).join(" ").slice(0,800);
+  const patterns = [
+    [/\b3036\b|daily free|free allocation|10[,.]?000 neurons|quota exceeded/i,429,"Q1","O limite diário gratuito da Cloudflare Workers AI foi atingido. Confirma o consumo no painel Workers AI; a quota gratuita reinicia às 00:00 UTC."],
+    [/\b3040\b|out of capacity|capacity temporarily|temporarily exceeded/i,503,"Q2","O modelo de IA está temporariamente sem capacidade. Tenta novamente mais tarde."],
+    [/\b3006\b|request too large|context length|too many tokens|input too long/i,413,"Q3","O pedido excedeu a capacidade aceite pelo modelo. É necessário reduzir os excertos enviados e voltar a tentar."],
+    [/\b3007\b|\b3008\b|timed?\s*out|request timeout|aborted/i,504,"Q4","O processamento da IA excedeu o tempo disponível. Tenta novamente mais tarde."],
+    [/\b429\b|rate limit/i,429,"Q5","A Cloudflare está a limitar temporariamente os pedidos de IA. Confirma o consumo e os limites no painel Cloudflare."],
+  ];
+  const match = patterns.find(([pattern]) => pattern.test(details));
+  const [status, code, message] = match ? match.slice(1) : [503,"Q0","A Cloudflare devolveu uma falha de IA sem causa identificável automaticamente. Consulta os registos do Worker em Observability."];
+  // A localização da falha é útil sem revelar dados fiscais nem segredos.
+  const step = {redacao:"redação",auditoria:"auditoria",correcao:"correção",reauditoria:"segunda auditoria"}[phase] || "análise";
+  console.warn("Fernando Workers AI:", code, "fase:", phase);
+  return json({error:`${message} (Código: ${code}; fase: ${step})`},status,origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "";
@@ -287,6 +306,7 @@ export default {
     try { data = normalizeRequest(await readBody(request)); }
     catch { return json({ error: "Pergunta ou fontes inválidas. Reduz o texto e tenta novamente." }, 400, origin); }
 
+    let phase = "redacao";
     try {
       const completion = await env.AI.run(MODEL, {
         messages: [{ role: "system", content: systemPrompt() }, { role: "user", content: userPrompt(data) }],
@@ -308,6 +328,7 @@ export default {
       const deterministicObjection = temporalRiskReason(answer,data.question);
       // Um segundo pedido independente procura contradições e fundamentação literal.
       const preliminaryObjection = [citationObjection,deterministicObjection].filter(Boolean).join(" ");
+      phase = "auditoria";
       let review = preliminaryObjection ? { approved:false,reason:preliminaryObjection,evidence:[] } : await auditAnswer(env,data,answer);
       if (!review) return unverified("R3", origin);
       let repairAttempted = false;
@@ -315,6 +336,7 @@ export default {
         // Uma objeção pode revelar um erro corrigível: tentar apenas UMA revisão.
         // O texto corrigido tem obrigatoriamente de passar por outra auditoria independente.
         repairAttempted = true;
+        phase = "correcao";
         const revised = await env.AI.run(MODEL, {
           messages: [{ role:"system", content:systemPrompt() }, { role:"user", content:correctionUserPrompt(data,answer,review.reason) }],
           temperature:0.1,
@@ -326,6 +348,7 @@ export default {
         if (!correctedRefs.allKnown) return unverified("R2", origin);
         answer = correction;
         if (temporalRiskReason(answer,data.question)) return unverified("R6", origin);
+        phase = "reauditoria";
         review = await auditAnswer(env,data,answer);
         if (!review) return unverified("R3", origin);
       }
@@ -334,8 +357,8 @@ export default {
       if (!reviewHasEvidence(review, data.sources)) return unverified("R5", origin);
 
       return json({ answer, grounded:true, verification:"double-ai-review", repairAttempted, deadlineNeedsVerification:data.deadlineNeedsVerification, sources: data.sources.map(({ id,title,url,official }) => ({ id,title,url,official })), generatedAt: new Date().toISOString() }, 200, origin);
-    } catch {
-      return json({ error: "A IA não está disponível de momento ou o limite gratuito foi atingido. A pesquisa documental continua disponível." }, 503, origin);
+    } catch(error) {
+      return aiFailure(error, phase, origin);
     }
   }
 };
