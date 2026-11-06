@@ -18,7 +18,7 @@ Aplicação PWA de apoio à organização de consultas e fontes fiscais portugue
 - Respostas automáticas com explicação, referências `[F1]`, `[F2]` e ligações aos artigos, quando o serviço de IA opcional estiver configurado.
 - Motor de IA num **Cloudflare Worker independente**. Usa a seleção dos artigos da AT e, apenas após autorização expressa em cada consulta, excertos de documentos pessoais.
 - Campo de acesso ao Worker em Definições. O endereço fica na base de dados local; a palavra-passe fica apenas na sessão do navegador e **não** vai para o backup nem para o GitHub.
-- O Fernando indica quando não dispõe de fontes adequadas, quando a IA falha ou quando não foi possível validar as referências apresentadas.
+- O Fernando indica quando não dispõe de fontes adequadas, quando a IA falha ou quando não foi possível validar as referências apresentadas. Bloqueia e tenta corrigir afirmações espontâneas sobre datas de entrada em vigor ou efeitos temporais que possam confundir uma alteração recente com a origem de um regime antigo.
 
 **Limitações:** a IA só funciona após configurar o Worker na Cloudflare; a versão publicada no GitHub, por si só, continua a ser uma PWA estática. A IA não efetua pesquisa jurídica em tempo real nem valida automaticamente a vigência. A recolha automática depende de páginas da AT e da execução do GitHub Actions; é uma cópia datada e pode estar incompleta. As fontes DR, CNC, EUR-Lex e OCC só são pesquisáveis quando os documentos correspondentes são guardados localmente (e enviados à IA mediante consentimento). Não há sincronização entre dispositivos. Os anexos da pergunta são temporários, salvo se forem guardados explicitamente na biblioteca. As respostas são geradas por modelo e podem conter erros; não substituem um parecer fiscal. Confirma a redação, eventuais alterações, os efeitos temporais e os prazos na fonte oficial atual.
 
@@ -32,7 +32,7 @@ Este repositório tem de ser público para utilizar GitHub Pages no plano gratui
 
 ### Índice oficial de consulta
 
-O ficheiro `data/legal-index.json` é atualizado pelo workflow `.github/workflows/atualizar-legislacao.yml` (execução programada e manual). O script `scripts/update_legal_index.py` obtém artigos diretamente do Portal das Finanças e preserva os textos anteriores quando falha pontualmente a leitura de uma página. Os textos recolhidos são servidos estaticamente pelo GitHub Pages e qualquer pessoa pode consultar o índice público. A data da última recolha surge em cada pesquisa, para evitar confundi-la com confirmação de vigência.
+O ficheiro `data/legal-index.json` é atualizado pelo workflow `.github/workflows/atualizar-legislacao.yml` (execução programada e manual). O script `scripts/update_legal_index.py` obtém artigos diretamente do Portal das Finanças e preserva os textos anteriores quando falha pontualmente a leitura de uma página. Também recolhe, enquanto permanecerem disponíveis, os ofícios-circulados oficiais n.º 30101/2007 e 25117/2026 relativos à inversão do sujeito passivo na construção civil. Estes **são orientações interpretativas, não normas legais**. Os textos recolhidos são servidos estaticamente pelo GitHub Pages e qualquer pessoa pode consultar o índice público. A data da última recolha surge em cada pesquisa, para evitar confundi-la com confirmação de vigência. O workflow executa testes do motor e da pesquisa antes de publicar dados.
 
 ## Ativar respostas com IA (sem instalar Node.js)
 
