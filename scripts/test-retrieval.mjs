@@ -48,3 +48,19 @@ test("envia a alínea de construção civil e não só o início truncado do art
   assert.ok(sources[0].text.length > 3200);
   assert.ok(sources[0].text.length <= 14000);
 });
+
+test("recupera orientações oficiais AT para explicar uma alteração sem apagar a regra anterior", () => {
+  const index = {articles:[
+    article("CIVA","2","j) Adquirentes de serviços de construção civil com direito à dedução devem autoliquidar o IVA."),
+    {code:"AT-IVA",kind:"orientacao-administrativa",title:"Ofício-circulado 25117/2026 — IVA construção civil",
+     url:"https://at.madeira.gov.pt/ficheiros/Oficio-Circulado-25117-2026.pdf",
+     text:"Ofício-circulado da AT sobre a inversão em serviços de construção civil. O Decreto-Lei n.º 97/2026 estendeu o âmbito de aplicação da regra já existente. Para a primeira parte da alínea j), são necessários, cumulativamente, serviços de construção civil e adquirente sujeito passivo com direito à dedução total ou parcial. Para a segunda parte, agora aditada, há requisitos específicos da verba 2.42."},
+    article("CIVA","27","Pagamento do imposto por sujeitos passivos e entrega da declaração periódica de IVA.")
+  ]};
+  const matches = legalMatches("Segundo o artigo 2.º alínea j) do CIVA, quem autoliquida o IVA da construção civil?","IVA",index);
+  assert.equal(matches[0].article.code,"CIVA");
+  assert.ok(matches.some(m => m.article.code === "AT-IVA"));
+  const sources = aiRequestSources(matches,[],index);
+  assert.ok(sources.some(s => s.title.includes("Orientação interpretativa AT")));
+  assert.match(sources.find(s => s.code === "AT-IVA").text,/estendeu o âmbito de aplicação/);
+});
