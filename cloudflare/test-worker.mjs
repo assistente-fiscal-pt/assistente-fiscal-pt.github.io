@@ -167,6 +167,37 @@ test("reformula uma resposta jurídica recusada e só apresenta a correção ap�
   assert.match(fake.paramsSent[2].messages[1].content,/indica expressamente o adquirente/);
 });
 
+test("bloqueia cronologia falsa do caso real mesmo que a auditoria simulada a aprovasse",async () => {
+  const construction = {
+    question:"Segundo o artigo 2.º, n.º 1, alínea j), do CIVA, quem é responsável pela liquidação do IVA nos serviços de construção civil?",
+    topic:"IVA",
+    sources:[{
+      type:"official",title:"CIVA · Artigo 2.º",code:"CIVA",
+      url:"https://info.portaldasfinancas.gov.pt/pt/informacao_fiscal/codigos_tributarios/civa_rep/Pages/iva2.aspx",
+      text:"j) As pessoas singulares ou coletivas que disponham de sede, estabelecimento estável ou domicílio em território nacional e pratiquem operações com direito à dedução total ou parcial do imposto, quando sejam adquirentes de serviços de construção civil, passam a ser sujeitos passivos do imposto nesta aquisição. Redação do Decreto-Lei n.º 97/2026."
+    }]
+  };
+  const wrong = "RESPOSTA DIRETA\nO adquirente autoliquida o IVA. [F1]\nFUNDAMENTAÇÃO\nEsta regra entrou em vigor em 1 de julho de 2026 nos termos do Decreto-Lei n.º 97/2026. [F1]";
+  const stillWrong = "O adquirente autoliquida o IVA. [F1] O regime entrou em vigor em 1 de julho de 2026. [F1]";
+  const approval = JSON.stringify({approved:true,evidence:[{source:"F1",quote:construction.sources[0].text}]});
+  const fake = environment(wrong,[stillWrong,approval]);
+  const response = await worker.fetch(request("/answer","POST",construction),fake.config);
+  assert.equal(response.status,422);
+  assert.equal((await response.json()).answer,undefined);
+  assert.equal(fake.calls,2); // A objeção automática antecede a auditoria por IA.
+  assert.match(fake.paramsSent[1].messages[1].content,/cronologia não solicitada/i);
+});
+
+test("repara uma cronologia não pedida e audita a resposta corrigida",async () => {
+  const wrong = "A declaração entrega-se conforme a lei. [F1] Este regime entrou em vigor em 2026. [F1]";
+  const corrected = "A entrega segue o regime indicado no artigo 41.º, sujeito à conferência da Agenda Fiscal. [F1]";
+  const fake = environment(wrong,[corrected,approvedReview]);
+  const response = await worker.fetch(request("/answer"),fake.config);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).answer,corrected);
+  assert.equal(fake.calls,3);
+});
+
 test("não confia numa aprovação sem citação literal verificável",async () => {
   const fake = environment(undefined,JSON.stringify({approved:true,evidence:[{source:"F1",quote:"Texto de apoio suficientemente longo mas que não aparece em nenhuma passagem da fonte."}]}));
   const response = await worker.fetch(request("/answer"),fake.config);
